@@ -11,6 +11,10 @@ import (
 )
 
 func main() {
+	// Reorder args so flags can appear after the positional argument.
+	// Go's flag package stops parsing at the first non-flag argument.
+	reorderArgs()
+
 	jsonFlag := flag.Bool("json", false, "Output as JSON")
 	allFlag := flag.Bool("all", false, "Show all modules, not just archived ones")
 	directOnly := flag.Bool("direct-only", false, "Only check direct dependencies")
@@ -122,6 +126,42 @@ func main() {
 	if hasArchived {
 		os.Exit(1)
 	}
+}
+
+// valueFlagNames lists flags that take a value argument (not boolean).
+var valueFlagNames = map[string]bool{
+	"-workers": true, "--workers": true,
+}
+
+// reorderArgs moves flags after positional arguments to before them,
+// so Go's flag package can parse them. For example:
+//
+//	go-mod-archived path/to/go.mod --files --tree
+//
+// becomes:
+//
+//	go-mod-archived --files --tree path/to/go.mod
+func reorderArgs() {
+	var flags, positional []string
+	args := os.Args[1:]
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "-") {
+			flags = append(flags, arg)
+			// If this flag takes a value and it's not using = syntax, consume the next arg too.
+			if valueFlagNames[arg] && !strings.Contains(arg, "=") && i+1 < len(args) {
+				i++
+				flags = append(flags, args[i])
+			}
+		} else {
+			positional = append(positional, arg)
+		}
+	}
+	reordered := make([]string, 0, 1+len(flags)+len(positional))
+	reordered = append(reordered, os.Args[0])
+	reordered = append(reordered, flags...)
+	reordered = append(reordered, positional...)
+	os.Args = reordered
 }
 
 // parseModGraph runs `go mod graph` in the given directory and returns
