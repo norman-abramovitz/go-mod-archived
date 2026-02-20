@@ -94,9 +94,13 @@ func main() {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not run go mod graph: %v\n", err)
 		} else {
-			PrintTree(results, graph, allModules, fileMatches)
-			if nonGitHubCount > 0 {
-				fmt.Fprintf(os.Stderr, "\nSkipped %d non-GitHub modules.\n", nonGitHubCount)
+			if *jsonFlag {
+				PrintTreeJSON(results, graph, allModules, fileMatches, nonGitHubCount)
+			} else {
+				PrintTree(results, graph, allModules, fileMatches)
+				if nonGitHubCount > 0 {
+					fmt.Fprintf(os.Stderr, "\nSkipped %d non-GitHub modules.\n", nonGitHubCount)
+				}
 			}
 			if hasArchived {
 				os.Exit(1)

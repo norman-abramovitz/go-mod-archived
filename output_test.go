@@ -700,6 +700,254 @@ func TestPrintTree_WithFileCount(t *testing.T) {
 	}
 }
 
+func TestBuildTree_BasicEntries(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/x/y", Version: "v0.1.0", Owner: "x", Repo: "y"},
+			IsArchived: true,
+			ArchivedAt: time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	allModules := []Module{
+		{Path: "github.com/a/b", Version: "v1.0.0", Owner: "a", Repo: "b", Direct: true},
+		{Path: "github.com/x/y", Version: "v0.1.0", Owner: "x", Repo: "y", Direct: false},
+	}
+
+	graph := map[string][]string{
+		"mymodule":               {"github.com/a/b@v1.0.0"},
+		"github.com/a/b@v1.0.0": {"github.com/x/y@v0.1.0"},
+		"github.com/x/y@v0.1.0": {},
+	}
+
+	entries, ctx := buildTree(results, graph, allModules)
+
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if entries[0].directPath != "github.com/a/b" {
+		t.Errorf("directPath = %q, want github.com/a/b", entries[0].directPath)
+	}
+	if len(entries[0].archived) != 1 || entries[0].archived[0] != "github.com/x/y" {
+		t.Errorf("archived = %v, want [github.com/x/y]", entries[0].archived)
+	}
+	if !ctx.archivedPaths["github.com/x/y"] {
+		t.Error("expected x/y in archivedPaths")
+	}
+}
+
+func TestBuildTree_NoArchived(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/a/b", Owner: "a", Repo: "b"},
+			IsArchived: false,
+		},
+	}
+	allModules := []Module{
+		{Path: "github.com/a/b", Owner: "a", Repo: "b"},
+	}
+	graph := map[string][]string{
+		"mymodule":               {"github.com/a/b@v1.0.0"},
+		"github.com/a/b@v1.0.0": {},
+	}
+
+	entries, _ := buildTree(results, graph, allModules)
+	if entries != nil {
+		t.Errorf("expected nil entries when no archived, got %v", entries)
+	}
+}
+
+func TestBuildTree_EmptyGraph(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/a/b", Version: "v1.0.0", Owner: "a", Repo: "b"},
+			IsArchived: true,
+		},
+	}
+	allModules := []Module{
+		{Path: "github.com/a/b", Version: "v1.0.0", Owner: "a", Repo: "b"},
+	}
+
+	entries, _ := buildTree(results, map[string][]string{}, allModules)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 fallback entry, got %d", len(entries))
+	}
+	if entries[0].directPath != "github.com/a/b" {
+		t.Errorf("directPath = %q", entries[0].directPath)
+	}
+}
+
+func TestPrintTreeJSON_Basic(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/x/y", Version: "v0.1.0", Owner: "x", Repo: "y"},
+			IsArchived: true,
+			ArchivedAt: time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC),
+			PushedAt:   time.Date(2023, 12, 1, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	allModules := []Module{
+		{Path: "github.com/a/b", Version: "v1.0.0", Owner: "a", Repo: "b", Direct: true},
+		{Path: "github.com/x/y", Version: "v0.1.0", Owner: "x", Repo: "y", Direct: false},
+	}
+
+	graph := map[string][]string{
+		"mymodule":               {"github.com/a/b@v1.0.0"},
+		"github.com/a/b@v1.0.0": {"github.com/x/y@v0.1.0"},
+		"github.com/x/y@v0.1.0": {},
+	}
+
+	output := captureStdout(t, func() {
+		PrintTreeJSON(results, graph, allModules, nil, 5)
+	})
+
+	var out JSONTreeOutput
+	if err := json.Unmarshal([]byte(output), &out); err != nil {
+		t.Fatalf("invalid JSON: %v\noutput: %s", err, output)
+	}
+
+	if out.SkippedNonGH != 5 {
+		t.Errorf("skipped = %d, want 5", out.SkippedNonGH)
+	}
+	if len(out.Tree) != 1 {
+		t.Fatalf("expected 1 tree entry, got %d", len(out.Tree))
+	}
+
+	entry := out.Tree[0]
+	if entry.Module != "github.com/a/b" {
+		t.Errorf("module = %q", entry.Module)
+	}
+	if entry.Version != "v1.0.0" {
+		t.Errorf("version = %q", entry.Version)
+	}
+	if entry.Archived {
+		t.Error("direct dep should not be archived")
+	}
+	if len(entry.ArchivedDependencies) != 1 {
+		t.Fatalf("expected 1 archived dep, got %d", len(entry.ArchivedDependencies))
+	}
+
+	dep := entry.ArchivedDependencies[0]
+	if dep.Module != "github.com/x/y" {
+		t.Errorf("dep module = %q", dep.Module)
+	}
+	if dep.ArchivedAt != "2024-03-15T00:00:00Z" {
+		t.Errorf("dep archived_at = %q", dep.ArchivedAt)
+	}
+}
+
+func TestPrintTreeJSON_DirectArchived(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/a/b", Version: "v1.0.0", Owner: "a", Repo: "b"},
+			IsArchived: true,
+			ArchivedAt: time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC),
+			PushedAt:   time.Date(2024, 5, 1, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	allModules := []Module{
+		{Path: "github.com/a/b", Version: "v1.0.0", Owner: "a", Repo: "b", Direct: true},
+	}
+
+	graph := map[string][]string{
+		"mymodule":               {"github.com/a/b@v1.0.0"},
+		"github.com/a/b@v1.0.0": {},
+	}
+
+	output := captureStdout(t, func() {
+		PrintTreeJSON(results, graph, allModules, nil, 0)
+	})
+
+	var out JSONTreeOutput
+	if err := json.Unmarshal([]byte(output), &out); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	if len(out.Tree) != 1 {
+		t.Fatalf("expected 1 tree entry, got %d", len(out.Tree))
+	}
+	if !out.Tree[0].Archived {
+		t.Error("direct dep should be archived")
+	}
+	if out.Tree[0].ArchivedAt != "2024-06-01T00:00:00Z" {
+		t.Errorf("archived_at = %q", out.Tree[0].ArchivedAt)
+	}
+}
+
+func TestPrintTreeJSON_WithSourceFiles(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/x/y", Version: "v0.1.0", Owner: "x", Repo: "y"},
+			IsArchived: true,
+			ArchivedAt: time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	allModules := []Module{
+		{Path: "github.com/a/b", Version: "v1.0.0", Owner: "a", Repo: "b"},
+		{Path: "github.com/x/y", Version: "v0.1.0", Owner: "x", Repo: "y"},
+	}
+
+	graph := map[string][]string{
+		"mymodule":               {"github.com/a/b@v1.0.0"},
+		"github.com/a/b@v1.0.0": {"github.com/x/y@v0.1.0"},
+	}
+
+	fileMatches := map[string][]FileMatch{
+		"github.com/x/y": {
+			{File: "foo.go", Line: 5, ImportPath: "github.com/x/y"},
+		},
+	}
+
+	output := captureStdout(t, func() {
+		PrintTreeJSON(results, graph, allModules, fileMatches, 0)
+	})
+
+	var out JSONTreeOutput
+	if err := json.Unmarshal([]byte(output), &out); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	dep := out.Tree[0].ArchivedDependencies[0]
+	if len(dep.SourceFiles) != 1 {
+		t.Fatalf("expected 1 source file, got %d", len(dep.SourceFiles))
+	}
+	if dep.SourceFiles[0].File != "foo.go" {
+		t.Errorf("source file = %q", dep.SourceFiles[0].File)
+	}
+}
+
+func TestPrintTreeJSON_NoArchived(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/a/b", Owner: "a", Repo: "b"},
+			IsArchived: false,
+		},
+	}
+	allModules := []Module{
+		{Path: "github.com/a/b", Owner: "a", Repo: "b"},
+	}
+	graph := map[string][]string{
+		"mymodule":               {"github.com/a/b@v1.0.0"},
+		"github.com/a/b@v1.0.0": {},
+	}
+
+	output := captureStdout(t, func() {
+		PrintTreeJSON(results, graph, allModules, nil, 0)
+	})
+
+	var out JSONTreeOutput
+	if err := json.Unmarshal([]byte(output), &out); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	if !strings.Contains(output, `"tree": []`) {
+		t.Error("expected tree to be empty array, not null")
+	}
+}
+
 func TestPluralize(t *testing.T) {
 	if got := pluralize(0, "file", "files"); got != "files" {
 		t.Errorf("pluralize(0) = %q, want %q", got, "files")

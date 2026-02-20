@@ -228,10 +228,22 @@ func formatArchivedLine(modPath, version string, rs RepoStatus) string {
 	return b.String()
 }
 
-// PrintTree outputs a dependency tree showing which direct dependencies
-// pull in archived indirect dependencies. If fileMatches is non-nil,
-// file counts are appended to archived labels.
-func PrintTree(results []RepoStatus, graph map[string][]string, allModules []Module, fileMatches map[string][]FileMatch) {
+// treeEntry represents a direct dependency and its archived transitive deps.
+type treeEntry struct {
+	directPath string
+	archived   []string // deduplicated module paths
+}
+
+// treeContext holds precomputed lookups needed to render tree entries.
+type treeContext struct {
+	archivedPaths map[string]bool
+	versionByPath map[string]string
+	getStatus     func(string) (RepoStatus, bool)
+}
+
+// buildTree computes the tree entries and lookup context from results, graph,
+// and allModules. Returns nil entries if there are no archived dependencies.
+func buildTree(results []RepoStatus, graph map[string][]string, allModules []Module) ([]treeEntry, *treeContext) {
 	// Build lookup from owner/repo → RepoStatus (for archived/pushed dates)
 	statusByRepo := make(map[string]RepoStatus)
 	archivedPaths := make(map[string]bool)
@@ -280,9 +292,14 @@ func PrintTree(results []RepoStatus, graph map[string][]string, allModules []Mod
 		return rs, ok
 	}
 
+	ctx := &treeContext{
+		archivedPaths: archivedPaths,
+		versionByPath: versionByPath,
+		getStatus:     getStatus,
+	}
+
 	if len(archivedPaths) == 0 {
-		fmt.Fprintf(os.Stderr, "\nNo archived dependencies found.\n")
-		return
+		return nil, ctx
 	}
 
 	// Find root module: the only graph key without an "@" (no version suffix)
@@ -304,37 +321,18 @@ func PrintTree(results []RepoStatus, graph map[string][]string, allModules []Mod
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "\nDEPENDENCY TREE (archived dependencies marked with [ARCHIVED])\n\n")
-
-	// fileCountSuffix returns " (N files)" if fileMatches has entries for modPath.
-	fileCountSuffix := func(modPath string) string {
-		if fileMatches == nil {
-			return ""
-		}
-		matches := fileMatches[modPath]
-		uniqueFiles := make(map[string]bool)
-		for _, m := range matches {
-			uniqueFiles[m.File] = true
-		}
-		n := len(uniqueFiles)
-		return fmt.Sprintf(" (%d %s)", n, pluralize(n, "file", "files"))
-	}
-
 	if rootKey == "" {
+		// No graph data — return one entry per archived result
+		var entries []treeEntry
 		for _, r := range results {
 			if r.IsArchived {
-				fmt.Printf("  %s%s\n", formatArchivedLine(r.Module.Path, r.Module.Version, r), fileCountSuffix(r.Module.Path))
+				entries = append(entries, treeEntry{directPath: r.Module.Path})
 			}
 		}
-		return
+		return entries, ctx
 	}
 
 	// For each direct dependency (child of root), find archived transitive deps
-	type treeEntry struct {
-		directPath string
-		archived   []string
-	}
-
 	var entries []treeEntry
 	for _, child := range graph[rootKey] {
 		childMod := stripVersion(child)
@@ -356,15 +354,45 @@ func PrintTree(results []RepoStatus, graph map[string][]string, allModules []Mod
 		return entries[i].directPath < entries[j].directPath
 	})
 
+	return entries, ctx
+}
+
+// PrintTree outputs a dependency tree showing which direct dependencies
+// pull in archived indirect dependencies. If fileMatches is non-nil,
+// file counts are appended to archived labels.
+func PrintTree(results []RepoStatus, graph map[string][]string, allModules []Module, fileMatches map[string][]FileMatch) {
+	entries, ctx := buildTree(results, graph, allModules)
+
+	if entries == nil {
+		fmt.Fprintf(os.Stderr, "\nNo archived dependencies found.\n")
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "\nDEPENDENCY TREE (archived dependencies marked with [ARCHIVED])\n\n")
+
+	// fileCountSuffix returns " (N files)" if fileMatches has entries for modPath.
+	fileCountSuffix := func(modPath string) string {
+		if fileMatches == nil {
+			return ""
+		}
+		matches := fileMatches[modPath]
+		uniqueFiles := make(map[string]bool)
+		for _, m := range matches {
+			uniqueFiles[m.File] = true
+		}
+		n := len(uniqueFiles)
+		return fmt.Sprintf(" (%d %s)", n, pluralize(n, "file", "files"))
+	}
+
 	for _, e := range entries {
-		if archivedPaths[e.directPath] {
-			if rs, ok := getStatus(e.directPath); ok {
-				fmt.Printf("%s%s\n", formatArchivedLine(e.directPath, versionByPath[e.directPath], rs), fileCountSuffix(e.directPath))
+		if ctx.archivedPaths[e.directPath] {
+			if rs, ok := ctx.getStatus(e.directPath); ok {
+				fmt.Printf("%s%s\n", formatArchivedLine(e.directPath, ctx.versionByPath[e.directPath], rs), fileCountSuffix(e.directPath))
 			} else {
 				fmt.Printf("%s [ARCHIVED]%s\n", e.directPath, fileCountSuffix(e.directPath))
 			}
 		} else {
-			ver := versionByPath[e.directPath]
+			ver := ctx.versionByPath[e.directPath]
 			if ver != "" {
 				fmt.Printf("%s@%s\n", e.directPath, ver)
 			} else {
@@ -381,13 +409,123 @@ func PrintTree(results []RepoStatus, graph map[string][]string, allModules []Mod
 			if i == len(e.archived)-1 || allSeen(e.archived[i+1:], seen) {
 				connector = "└── "
 			}
-			if rs, ok := getStatus(a); ok {
-				fmt.Printf("  %s%s%s\n", connector, formatArchivedLine(a, versionByPath[a], rs), fileCountSuffix(a))
+			if rs, ok := ctx.getStatus(a); ok {
+				fmt.Printf("  %s%s%s\n", connector, formatArchivedLine(a, ctx.versionByPath[a], rs), fileCountSuffix(a))
 			} else {
 				fmt.Printf("  %s%s [ARCHIVED]%s\n", connector, a, fileCountSuffix(a))
 			}
 		}
 	}
+}
+
+// JSONTreeOutput is the structure for --tree --json output mode.
+type JSONTreeOutput struct {
+	Tree         []JSONTreeEntry `json:"tree"`
+	SkippedNonGH int             `json:"skipped_non_github"`
+	TotalChecked int             `json:"total_checked"`
+}
+
+// JSONTreeEntry represents a direct dependency in the JSON tree.
+type JSONTreeEntry struct {
+	Module                 string              `json:"module"`
+	Version                string              `json:"version"`
+	Archived               bool                `json:"archived"`
+	ArchivedAt             string              `json:"archived_at,omitempty"`
+	PushedAt               string              `json:"pushed_at,omitempty"`
+	SourceFiles            []JSONSourceFile    `json:"source_files,omitempty"`
+	ArchivedDependencies   []JSONTreeArchivedDep `json:"archived_dependencies"`
+}
+
+// JSONTreeArchivedDep represents an archived transitive dependency.
+type JSONTreeArchivedDep struct {
+	Module      string           `json:"module"`
+	Version     string           `json:"version"`
+	ArchivedAt  string           `json:"archived_at,omitempty"`
+	PushedAt    string           `json:"pushed_at,omitempty"`
+	SourceFiles []JSONSourceFile `json:"source_files,omitempty"`
+}
+
+// PrintTreeJSON outputs the dependency tree as JSON.
+func PrintTreeJSON(results []RepoStatus, graph map[string][]string, allModules []Module, fileMatches map[string][]FileMatch, nonGitHubCount int) {
+	entries, ctx := buildTree(results, graph, allModules)
+
+	out := JSONTreeOutput{
+		Tree:         []JSONTreeEntry{},
+		SkippedNonGH: nonGitHubCount,
+		TotalChecked: len(results),
+	}
+
+	if entries == nil {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(out)
+		return
+	}
+
+	buildSourceFiles := func(modPath string) []JSONSourceFile {
+		if fileMatches == nil {
+			return nil
+		}
+		var sf []JSONSourceFile
+		for _, fm := range fileMatches[modPath] {
+			sf = append(sf, JSONSourceFile{
+				File:   fm.File,
+				Line:   fm.Line,
+				Import: fm.ImportPath,
+			})
+		}
+		return sf
+	}
+
+	for _, e := range entries {
+		entry := JSONTreeEntry{
+			Module:               e.directPath,
+			Version:              ctx.versionByPath[e.directPath],
+			Archived:             ctx.archivedPaths[e.directPath],
+			ArchivedDependencies: []JSONTreeArchivedDep{},
+		}
+
+		if entry.Archived {
+			if rs, ok := ctx.getStatus(e.directPath); ok {
+				if !rs.ArchivedAt.IsZero() {
+					entry.ArchivedAt = rs.ArchivedAt.Format("2006-01-02T15:04:05Z")
+				}
+				if !rs.PushedAt.IsZero() {
+					entry.PushedAt = rs.PushedAt.Format("2006-01-02T15:04:05Z")
+				}
+			}
+			entry.SourceFiles = buildSourceFiles(e.directPath)
+		}
+
+		seen := make(map[string]bool)
+		for _, a := range e.archived {
+			if seen[a] {
+				continue
+			}
+			seen[a] = true
+
+			dep := JSONTreeArchivedDep{
+				Module:  a,
+				Version: ctx.versionByPath[a],
+			}
+			if rs, ok := ctx.getStatus(a); ok {
+				if !rs.ArchivedAt.IsZero() {
+					dep.ArchivedAt = rs.ArchivedAt.Format("2006-01-02T15:04:05Z")
+				}
+				if !rs.PushedAt.IsZero() {
+					dep.PushedAt = rs.PushedAt.Format("2006-01-02T15:04:05Z")
+				}
+			}
+			dep.SourceFiles = buildSourceFiles(a)
+			entry.ArchivedDependencies = append(entry.ArchivedDependencies, dep)
+		}
+
+		out.Tree = append(out.Tree, entry)
+	}
+
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	enc.Encode(out)
 }
 
 // allSeen returns true if all items in slice are already in the seen set.
