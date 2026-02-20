@@ -139,13 +139,37 @@ func PrintJSON(results []RepoStatus, nonGitHubCount int, showAll bool) {
 	enc.Encode(out)
 }
 
+// formatArchivedLine returns a formatted string with version, archived date, and last pushed date.
+// modPath and version come from the go.mod entry; rs provides the archived/pushed dates from GitHub.
+func formatArchivedLine(modPath, version string, rs RepoStatus) string {
+	var b strings.Builder
+	b.WriteString(modPath)
+	if version != "" {
+		b.WriteString("@")
+		b.WriteString(version)
+	}
+	b.WriteString(" [ARCHIVED")
+	if !rs.ArchivedAt.IsZero() {
+		b.WriteString(" ")
+		b.WriteString(rs.ArchivedAt.Format("2006-01-02"))
+	}
+	if !rs.PushedAt.IsZero() {
+		b.WriteString(", last pushed ")
+		b.WriteString(rs.PushedAt.Format("2006-01-02"))
+	}
+	b.WriteString("]")
+	return b.String()
+}
+
 // PrintTree outputs a dependency tree showing which direct dependencies
 // pull in archived indirect dependencies.
 func PrintTree(results []RepoStatus, graph map[string][]string, allModules []Module) {
-	// Build set of archived module paths (by stripped module path)
+	// Build lookup from owner/repo → RepoStatus (for archived/pushed dates)
+	statusByRepo := make(map[string]RepoStatus)
 	archivedPaths := make(map[string]bool)
 	for _, r := range results {
 		if r.IsArchived {
+			statusByRepo[r.Module.Owner+"/"+r.Module.Repo] = r
 			archivedPaths[r.Module.Path] = true
 		}
 	}
@@ -163,6 +187,29 @@ func PrintTree(results []RepoStatus, graph map[string][]string, allModules []Mod
 				archivedPaths[p] = true
 			}
 		}
+	}
+
+	// Build lookup from module path → version and owner/repo (from go.mod)
+	versionByPath := make(map[string]string)
+	repoByPath := make(map[string]string) // module path → "owner/repo"
+	for _, m := range allModules {
+		versionByPath[m.Path] = m.Version
+		if m.Owner != "" {
+			repoByPath[m.Path] = m.Owner + "/" + m.Repo
+		}
+	}
+
+	// Helper to get RepoStatus for a module path (via its owner/repo)
+	getStatus := func(modPath string) (RepoStatus, bool) {
+		repo := repoByPath[modPath]
+		if repo == "" {
+			owner, repoName := extractGitHub(modPath)
+			if owner != "" {
+				repo = owner + "/" + repoName
+			}
+		}
+		rs, ok := statusByRepo[repo]
+		return rs, ok
 	}
 
 	if len(archivedPaths) == 0 {
@@ -194,7 +241,7 @@ func PrintTree(results []RepoStatus, graph map[string][]string, allModules []Mod
 	if rootKey == "" {
 		for _, r := range results {
 			if r.IsArchived {
-				fmt.Printf("  %s [ARCHIVED]\n", r.Module.Path)
+				fmt.Printf("  %s\n", formatArchivedLine(r.Module.Path, r.Module.Version, r))
 			}
 		}
 		return
@@ -229,9 +276,18 @@ func PrintTree(results []RepoStatus, graph map[string][]string, allModules []Mod
 
 	for _, e := range entries {
 		if archivedPaths[e.directPath] {
-			fmt.Printf("%s [ARCHIVED]\n", e.directPath)
+			if rs, ok := getStatus(e.directPath); ok {
+				fmt.Printf("%s\n", formatArchivedLine(e.directPath, versionByPath[e.directPath], rs))
+			} else {
+				fmt.Printf("%s [ARCHIVED]\n", e.directPath)
+			}
 		} else {
-			fmt.Printf("%s\n", e.directPath)
+			ver := versionByPath[e.directPath]
+			if ver != "" {
+				fmt.Printf("%s@%s\n", e.directPath, ver)
+			} else {
+				fmt.Printf("%s\n", e.directPath)
+			}
 		}
 		seen := make(map[string]bool)
 		for i, a := range e.archived {
@@ -243,7 +299,11 @@ func PrintTree(results []RepoStatus, graph map[string][]string, allModules []Mod
 			if i == len(e.archived)-1 || allSeen(e.archived[i+1:], seen) {
 				connector = "└── "
 			}
-			fmt.Printf("  %s%s [ARCHIVED]\n", connector, a)
+			if rs, ok := getStatus(a); ok {
+				fmt.Printf("  %s%s\n", connector, formatArchivedLine(a, versionByPath[a], rs))
+			} else {
+				fmt.Printf("  %s%s [ARCHIVED]\n", connector, a)
+			}
 		}
 	}
 }

@@ -111,6 +111,43 @@ func TestFindArchivedTransitive_NoArchived(t *testing.T) {
 	}
 }
 
+func TestFormatArchivedLine(t *testing.T) {
+	rs := RepoStatus{
+		ArchivedAt: time.Date(2024, 7, 22, 0, 0, 0, 0, time.UTC),
+		PushedAt:   time.Date(2021, 5, 5, 0, 0, 0, 0, time.UTC),
+	}
+
+	got := formatArchivedLine("github.com/foo/bar", "v1.2.3", rs)
+	want := "github.com/foo/bar@v1.2.3 [ARCHIVED 2024-07-22, last pushed 2021-05-05]"
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+}
+
+func TestFormatArchivedLine_NoVersion(t *testing.T) {
+	rs := RepoStatus{
+		ArchivedAt: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+	}
+
+	got := formatArchivedLine("github.com/foo/bar", "", rs)
+	if !strings.Contains(got, "github.com/foo/bar [ARCHIVED") {
+		t.Errorf("expected no @ when version empty, got %q", got)
+	}
+	if strings.Contains(got, "last pushed") {
+		t.Errorf("should not show last pushed when zero, got %q", got)
+	}
+}
+
+func TestFormatArchivedLine_NoDates(t *testing.T) {
+	rs := RepoStatus{}
+
+	got := formatArchivedLine("github.com/foo/bar", "v1.0.0", rs)
+	want := "github.com/foo/bar@v1.0.0 [ARCHIVED]"
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+}
+
 // captureStdout captures stdout output during fn execution.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
@@ -333,14 +370,16 @@ func TestPrintTable_NotFoundModule(t *testing.T) {
 func TestPrintTree_BasicTree(t *testing.T) {
 	results := []RepoStatus{
 		{
-			Module:     Module{Path: "github.com/x/y", Owner: "x", Repo: "y"},
+			Module:     Module{Path: "github.com/x/y", Version: "v0.1.0", Owner: "x", Repo: "y"},
 			IsArchived: true,
+			ArchivedAt: time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC),
+			PushedAt:   time.Date(2023, 12, 1, 0, 0, 0, 0, time.UTC),
 		},
 	}
 
 	allModules := []Module{
-		{Path: "github.com/a/b", Owner: "a", Repo: "b", Direct: true},
-		{Path: "github.com/x/y", Owner: "x", Repo: "y", Direct: false},
+		{Path: "github.com/a/b", Version: "v1.0.0", Owner: "a", Repo: "b", Direct: true},
+		{Path: "github.com/x/y", Version: "v0.1.0", Owner: "x", Repo: "y", Direct: false},
 	}
 
 	graph := map[string][]string{
@@ -353,24 +392,32 @@ func TestPrintTree_BasicTree(t *testing.T) {
 		PrintTree(results, graph, allModules)
 	})
 
-	if !strings.Contains(output, "github.com/a/b") {
-		t.Error("should show direct dep that pulls in archived module")
+	if !strings.Contains(output, "github.com/a/b@v1.0.0") {
+		t.Error("should show direct dep with version")
 	}
-	if !strings.Contains(output, "github.com/x/y [ARCHIVED]") {
-		t.Error("should show archived transitive dep")
+	if !strings.Contains(output, "github.com/x/y@v0.1.0") {
+		t.Error("should show archived transitive dep with version")
+	}
+	if !strings.Contains(output, "ARCHIVED 2024-03-15") {
+		t.Error("should show archived date")
+	}
+	if !strings.Contains(output, "last pushed 2023-12-01") {
+		t.Error("should show last pushed date")
 	}
 }
 
 func TestPrintTree_DirectArchived(t *testing.T) {
 	results := []RepoStatus{
 		{
-			Module:     Module{Path: "github.com/a/b", Owner: "a", Repo: "b"},
+			Module:     Module{Path: "github.com/a/b", Version: "v1.0.0", Owner: "a", Repo: "b"},
 			IsArchived: true,
+			ArchivedAt: time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC),
+			PushedAt:   time.Date(2024, 5, 1, 0, 0, 0, 0, time.UTC),
 		},
 	}
 
 	allModules := []Module{
-		{Path: "github.com/a/b", Owner: "a", Repo: "b", Direct: true},
+		{Path: "github.com/a/b", Version: "v1.0.0", Owner: "a", Repo: "b", Direct: true},
 	}
 
 	graph := map[string][]string{
@@ -382,8 +429,8 @@ func TestPrintTree_DirectArchived(t *testing.T) {
 		PrintTree(results, graph, allModules)
 	})
 
-	if !strings.Contains(output, "github.com/a/b [ARCHIVED]") {
-		t.Error("should show direct dep as archived")
+	if !strings.Contains(output, "github.com/a/b@v1.0.0 [ARCHIVED 2024-06-01, last pushed 2024-05-01]") {
+		t.Errorf("should show direct dep as archived with version and dates, got:\n%s", output)
 	}
 }
 
@@ -416,13 +463,14 @@ func TestPrintTree_NoArchived(t *testing.T) {
 func TestPrintTree_EmptyGraph(t *testing.T) {
 	results := []RepoStatus{
 		{
-			Module:     Module{Path: "github.com/a/b", Owner: "a", Repo: "b"},
+			Module:     Module{Path: "github.com/a/b", Version: "v1.0.0", Owner: "a", Repo: "b"},
 			IsArchived: true,
+			ArchivedAt: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 		},
 	}
 
 	allModules := []Module{
-		{Path: "github.com/a/b", Owner: "a", Repo: "b", Direct: true},
+		{Path: "github.com/a/b", Version: "v1.0.0", Owner: "a", Repo: "b", Direct: true},
 	}
 
 	// Empty graph — no root key found, fallback to flat list
@@ -432,8 +480,8 @@ func TestPrintTree_EmptyGraph(t *testing.T) {
 		PrintTree(results, graph, allModules)
 	})
 
-	if !strings.Contains(output, "github.com/a/b [ARCHIVED]") {
-		t.Error("fallback should still list archived deps")
+	if !strings.Contains(output, "github.com/a/b@v1.0.0 [ARCHIVED") {
+		t.Errorf("fallback should still list archived deps with version, got:\n%s", output)
 	}
 }
 
