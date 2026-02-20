@@ -1,0 +1,123 @@
+package main
+
+import (
+	"bufio"
+	"flag"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+)
+
+func main() {
+	jsonFlag := flag.Bool("json", false, "Output as JSON")
+	allFlag := flag.Bool("all", false, "Show all modules, not just archived ones")
+	directOnly := flag.Bool("direct-only", false, "Only check direct dependencies")
+	workers := flag.Int("workers", 50, "Number of repos per GitHub GraphQL batch request")
+	treeFlag := flag.Bool("tree", false, "Show dependency tree for archived modules (uses go mod graph)")
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: go-mod-archived [flags] [path/to/go.mod]\n\nDetect archived GitHub dependencies in a Go project.\n\nFlags:\n")
+		flag.PrintDefaults()
+	}
+	flag.Parse()
+
+	// Determine go.mod path
+	gomodPath := "go.mod"
+	if flag.NArg() > 0 {
+		gomodPath = flag.Arg(0)
+	}
+	gomodPath, err := filepath.Abs(gomodPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(2)
+	}
+
+	// Parse go.mod
+	allModules, err := ParseGoMod(gomodPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(2)
+	}
+
+	// Filter to GitHub modules and deduplicate
+	githubModules, nonGitHubCount := FilterGitHub(allModules, *directOnly)
+
+	if len(githubModules) == 0 {
+		fmt.Fprintf(os.Stderr, "No GitHub modules found in %s\n", gomodPath)
+		os.Exit(0)
+	}
+
+	fmt.Fprintf(os.Stderr, "Checking %d GitHub modules...\n", len(githubModules))
+
+	// Query GitHub
+	results, err := CheckRepos(githubModules, *workers)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(2)
+	}
+
+	// Enrich results with direct/indirect info from all modules (not just deduplicated)
+	// The deduplicated set loses some info, but we kept Direct from the first occurrence.
+
+	// Check if any archived
+	hasArchived := false
+	for _, r := range results {
+		if r.IsArchived {
+			hasArchived = true
+			break
+		}
+	}
+
+	// Handle --tree mode
+	if *treeFlag && hasArchived {
+		graph, err := parseModGraph(filepath.Dir(gomodPath))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not run go mod graph: %v\n", err)
+		} else {
+			PrintTree(results, graph, allModules)
+			if nonGitHubCount > 0 {
+				fmt.Fprintf(os.Stderr, "\nSkipped %d non-GitHub modules.\n", nonGitHubCount)
+			}
+			if hasArchived {
+				os.Exit(1)
+			}
+			os.Exit(0)
+		}
+	}
+
+	// Output
+	if *jsonFlag {
+		PrintJSON(results, nonGitHubCount, *allFlag)
+	} else {
+		PrintTable(results, nonGitHubCount, *allFlag)
+	}
+
+	if hasArchived {
+		os.Exit(1)
+	}
+}
+
+// parseModGraph runs `go mod graph` in the given directory and returns
+// a map of parent → []child (both as "module@version" strings).
+func parseModGraph(dir string) (map[string][]string, error) {
+	cmd := exec.Command("go", "mod", "graph")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	graph := make(map[string][]string)
+	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	for scanner.Scan() {
+		line := scanner.Text()
+		parts := strings.Fields(line)
+		if len(parts) != 2 {
+			continue
+		}
+		parent, child := parts[0], parts[1]
+		graph[parent] = append(graph[parent], child)
+	}
+	return graph, scanner.Err()
+}

@@ -1,0 +1,284 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"sort"
+	"strings"
+	"text/tabwriter"
+)
+
+// PrintTable outputs archived (or all) results in a human-readable table.
+func PrintTable(results []RepoStatus, nonGitHubCount int, showAll bool) {
+	// Separate archived, not-found, and active
+	var archived, notFound, active []RepoStatus
+	for _, r := range results {
+		switch {
+		case r.NotFound:
+			notFound = append(notFound, r)
+		case r.IsArchived:
+			archived = append(archived, r)
+		default:
+			active = append(active, r)
+		}
+	}
+
+	sort.Slice(archived, func(i, j int) bool {
+		return archived[i].Module.Path < archived[j].Module.Path
+	})
+
+	totalChecked := len(results)
+
+	if len(archived) > 0 {
+		fmt.Fprintf(os.Stderr, "\nARCHIVED DEPENDENCIES (%d of %d github.com modules)\n\n", len(archived), totalChecked)
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT\tARCHIVED AT\tLAST PUSHED")
+		for _, r := range archived {
+			direct := "indirect"
+			if r.Module.Direct {
+				direct = "direct"
+			}
+			archivedAt := r.ArchivedAt.Format("2006-01-02")
+			pushedAt := r.PushedAt.Format("2006-01-02")
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, archivedAt, pushedAt)
+		}
+		w.Flush()
+	} else {
+		fmt.Fprintf(os.Stderr, "\nNo archived dependencies found among %d github.com modules.\n", totalChecked)
+	}
+
+	if len(notFound) > 0 {
+		fmt.Fprintf(os.Stderr, "\nNOT FOUND (%d modules):\n", len(notFound))
+		for _, r := range notFound {
+			fmt.Fprintf(os.Stderr, "  %s — %s\n", r.Module.Path, r.Error)
+		}
+	}
+
+	if showAll && len(active) > 0 {
+		fmt.Fprintf(os.Stderr, "\nACTIVE DEPENDENCIES (%d modules)\n\n", len(active))
+		sort.Slice(active, func(i, j int) bool {
+			return active[i].Module.Path < active[j].Module.Path
+		})
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT\tLAST PUSHED")
+		for _, r := range active {
+			direct := "indirect"
+			if r.Module.Direct {
+				direct = "direct"
+			}
+			pushedAt := r.PushedAt.Format("2006-01-02")
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, pushedAt)
+		}
+		w.Flush()
+	}
+
+	if nonGitHubCount > 0 {
+		fmt.Fprintf(os.Stderr, "\nSkipped %d non-GitHub modules.\n", nonGitHubCount)
+	}
+}
+
+// JSONOutput is the structure for JSON output mode.
+type JSONOutput struct {
+	Archived       []JSONModule `json:"archived"`
+	NotFound       []JSONModule `json:"not_found,omitempty"`
+	Active         []JSONModule `json:"active,omitempty"`
+	SkippedNonGH   int          `json:"skipped_non_github"`
+	TotalChecked   int          `json:"total_checked"`
+}
+
+type JSONModule struct {
+	Module     string `json:"module"`
+	Version    string `json:"version"`
+	Direct     bool   `json:"direct"`
+	Owner      string `json:"owner"`
+	Repo       string `json:"repo"`
+	ArchivedAt string `json:"archived_at,omitempty"`
+	PushedAt   string `json:"pushed_at,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
+// PrintJSON outputs results as JSON.
+func PrintJSON(results []RepoStatus, nonGitHubCount int, showAll bool) {
+	out := JSONOutput{
+		SkippedNonGH: nonGitHubCount,
+		TotalChecked: len(results),
+		Archived:     []JSONModule{},
+	}
+
+	for _, r := range results {
+		jm := JSONModule{
+			Module:  r.Module.Path,
+			Version: r.Module.Version,
+			Direct:  r.Module.Direct,
+			Owner:   r.Module.Owner,
+			Repo:    r.Module.Repo,
+		}
+		if !r.PushedAt.IsZero() {
+			jm.PushedAt = r.PushedAt.Format("2006-01-02T15:04:05Z")
+		}
+
+		switch {
+		case r.NotFound:
+			jm.Error = r.Error
+			out.NotFound = append(out.NotFound, jm)
+		case r.IsArchived:
+			if !r.ArchivedAt.IsZero() {
+				jm.ArchivedAt = r.ArchivedAt.Format("2006-01-02T15:04:05Z")
+			}
+			out.Archived = append(out.Archived, jm)
+		default:
+			if showAll {
+				out.Active = append(out.Active, jm)
+			}
+		}
+	}
+
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	enc.Encode(out)
+}
+
+// PrintTree outputs a dependency tree showing which direct dependencies
+// pull in archived indirect dependencies.
+func PrintTree(results []RepoStatus, graph map[string][]string, allModules []Module) {
+	// Build set of archived module paths (by stripped module path)
+	archivedPaths := make(map[string]bool)
+	for _, r := range results {
+		if r.IsArchived {
+			archivedPaths[r.Module.Path] = true
+		}
+	}
+	// Also map owner/repo → module paths for multi-path repos
+	repoToModules := make(map[string][]string)
+	for _, m := range allModules {
+		if m.Owner != "" {
+			key := m.Owner + "/" + m.Repo
+			repoToModules[key] = append(repoToModules[key], m.Path)
+		}
+	}
+	for _, r := range results {
+		if r.IsArchived {
+			for _, p := range repoToModules[r.Module.Owner+"/"+r.Module.Repo] {
+				archivedPaths[p] = true
+			}
+		}
+	}
+
+	if len(archivedPaths) == 0 {
+		fmt.Fprintf(os.Stderr, "\nNo archived dependencies found.\n")
+		return
+	}
+
+	// Find root module: the only graph key without an "@" (no version suffix)
+	var rootKey string
+	for key := range graph {
+		if !strings.Contains(key, "@") {
+			rootKey = key
+			break
+		}
+	}
+	if rootKey == "" {
+		// Fallback: pick the key with the most children
+		maxChildren := 0
+		for key, children := range graph {
+			if len(children) > maxChildren {
+				maxChildren = len(children)
+				rootKey = key
+			}
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "\nDEPENDENCY TREE (archived dependencies marked with [ARCHIVED])\n\n")
+
+	if rootKey == "" {
+		for _, r := range results {
+			if r.IsArchived {
+				fmt.Printf("  %s [ARCHIVED]\n", r.Module.Path)
+			}
+		}
+		return
+	}
+
+	// For each direct dependency (child of root), find archived transitive deps
+	type treeEntry struct {
+		directPath string
+		archived   []string
+	}
+
+	var entries []treeEntry
+	for _, child := range graph[rootKey] {
+		childMod := stripVersion(child)
+		selfArchived := archivedPaths[childMod]
+		archivedTransitive := findArchivedTransitive(child, graph, archivedPaths, make(map[string]bool))
+
+		if selfArchived || len(archivedTransitive) > 0 {
+			entry := treeEntry{directPath: childMod}
+			for _, a := range archivedTransitive {
+				if a != childMod {
+					entry.archived = append(entry.archived, a)
+				}
+			}
+			entries = append(entries, entry)
+		}
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].directPath < entries[j].directPath
+	})
+
+	for _, e := range entries {
+		if archivedPaths[e.directPath] {
+			fmt.Printf("%s [ARCHIVED]\n", e.directPath)
+		} else {
+			fmt.Printf("%s\n", e.directPath)
+		}
+		seen := make(map[string]bool)
+		for i, a := range e.archived {
+			if seen[a] {
+				continue
+			}
+			seen[a] = true
+			connector := "├── "
+			if i == len(e.archived)-1 || allSeen(e.archived[i+1:], seen) {
+				connector = "└── "
+			}
+			fmt.Printf("  %s%s [ARCHIVED]\n", connector, a)
+		}
+	}
+}
+
+// allSeen returns true if all items in slice are already in the seen set.
+func allSeen(items []string, seen map[string]bool) bool {
+	for _, item := range items {
+		if !seen[item] {
+			return false
+		}
+	}
+	return true
+}
+
+func stripVersion(s string) string {
+	// go mod graph entries look like "github.com/foo/bar@v1.2.3"
+	if idx := strings.LastIndex(s, "@"); idx > 0 {
+		return s[:idx]
+	}
+	return s
+}
+
+func findArchivedTransitive(node string, graph map[string][]string, archivedPaths map[string]bool, visited map[string]bool) []string {
+	if visited[node] {
+		return nil
+	}
+	visited[node] = true
+
+	var result []string
+	for _, child := range graph[node] {
+		childMod := stripVersion(child)
+		if archivedPaths[childMod] {
+			result = append(result, childMod)
+		}
+		result = append(result, findArchivedTransitive(child, graph, archivedPaths, visited)...)
+	}
+	return result
+}
