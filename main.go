@@ -16,6 +16,7 @@ func main() {
 	directOnly := flag.Bool("direct-only", false, "Only check direct dependencies")
 	workers := flag.Int("workers", 50, "Number of repos per GitHub GraphQL batch request")
 	treeFlag := flag.Bool("tree", false, "Show dependency tree for archived modules (uses go mod graph)")
+	filesFlag := flag.Bool("files", false, "Show source files that import archived modules")
 	timeFlag := flag.Bool("time", false, "Include time in date output (2006-01-02 15:04:05 instead of 2006-01-02)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: go-mod-archived [flags] [path/to/go.mod]\n\nDetect archived GitHub dependencies in a Go project.\n\nFlags:\n")
@@ -68,11 +69,23 @@ func main() {
 
 	// Check if any archived
 	hasArchived := false
+	var archivedModulePaths []string
 	for _, r := range results {
 		if r.IsArchived {
 			hasArchived = true
-			break
+			archivedModulePaths = append(archivedModulePaths, r.Module.Path)
 		}
+	}
+
+	// Scan source files for imports of archived modules
+	var fileMatches map[string][]FileMatch
+	if *filesFlag && hasArchived {
+		fm, err := ScanImports(filepath.Dir(gomodPath), archivedModulePaths)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error scanning imports: %v\n", err)
+			os.Exit(2)
+		}
+		fileMatches = fm
 	}
 
 	// Handle --tree mode
@@ -81,7 +94,7 @@ func main() {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not run go mod graph: %v\n", err)
 		} else {
-			PrintTree(results, graph, allModules)
+			PrintTree(results, graph, allModules, fileMatches)
 			if nonGitHubCount > 0 {
 				fmt.Fprintf(os.Stderr, "\nSkipped %d non-GitHub modules.\n", nonGitHubCount)
 			}
@@ -94,9 +107,12 @@ func main() {
 
 	// Output
 	if *jsonFlag {
-		PrintJSON(results, nonGitHubCount, *allFlag)
+		PrintJSON(results, nonGitHubCount, *allFlag, fileMatches)
 	} else {
 		PrintTable(results, nonGitHubCount, *allFlag)
+		if fileMatches != nil {
+			PrintFiles(results, fileMatches)
+		}
 	}
 
 	if hasArchived {

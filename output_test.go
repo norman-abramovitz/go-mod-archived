@@ -226,7 +226,7 @@ func TestPrintJSON_ArchivedOnly(t *testing.T) {
 	}
 
 	output := captureStdout(t, func() {
-		PrintJSON(results, 5, false)
+		PrintJSON(results, 5, false, nil)
 	})
 
 	var out JSONOutput
@@ -261,7 +261,7 @@ func TestPrintJSON_ShowAll(t *testing.T) {
 	}
 
 	output := captureStdout(t, func() {
-		PrintJSON(results, 0, true)
+		PrintJSON(results, 0, true, nil)
 	})
 
 	var out JSONOutput
@@ -284,7 +284,7 @@ func TestPrintJSON_NotFound(t *testing.T) {
 	}
 
 	output := captureStdout(t, func() {
-		PrintJSON(results, 0, false)
+		PrintJSON(results, 0, false, nil)
 	})
 
 	var out JSONOutput
@@ -302,7 +302,7 @@ func TestPrintJSON_NotFound(t *testing.T) {
 
 func TestPrintJSON_EmptyArchived(t *testing.T) {
 	output := captureStdout(t, func() {
-		PrintJSON(nil, 0, false)
+		PrintJSON(nil, 0, false, nil)
 	})
 
 	var out JSONOutput
@@ -431,7 +431,7 @@ func TestPrintTree_BasicTree(t *testing.T) {
 	}
 
 	output := captureStdout(t, func() {
-		PrintTree(results, graph, allModules)
+		PrintTree(results, graph, allModules, nil)
 	})
 
 	if !strings.Contains(output, "github.com/a/b@v1.0.0") {
@@ -468,7 +468,7 @@ func TestPrintTree_DirectArchived(t *testing.T) {
 	}
 
 	output := captureStdout(t, func() {
-		PrintTree(results, graph, allModules)
+		PrintTree(results, graph, allModules, nil)
 	})
 
 	if !strings.Contains(output, "github.com/a/b@v1.0.0 [ARCHIVED 2024-06-01, last pushed 2024-05-01]") {
@@ -494,7 +494,7 @@ func TestPrintTree_NoArchived(t *testing.T) {
 	}
 
 	output := captureStdout(t, func() {
-		PrintTree(results, graph, allModules)
+		PrintTree(results, graph, allModules, nil)
 	})
 
 	if output != "" {
@@ -519,7 +519,7 @@ func TestPrintTree_EmptyGraph(t *testing.T) {
 	graph := map[string][]string{}
 
 	output := captureStdout(t, func() {
-		PrintTree(results, graph, allModules)
+		PrintTree(results, graph, allModules, nil)
 	})
 
 	if !strings.Contains(output, "github.com/a/b@v1.0.0 [ARCHIVED") {
@@ -545,5 +545,169 @@ github.com/foo/bar@v1.0.0 github.com/x/y@v0.1.0
 	}
 	if len(graph["github.com/foo/bar@v1.0.0"]) != 1 {
 		t.Errorf("foo/bar should have 1 child, got %d", len(graph["github.com/foo/bar@v1.0.0"]))
+	}
+}
+
+func TestPrintFiles_BasicOutput(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/foo/bar", Version: "v1.0.0", Owner: "foo", Repo: "bar"},
+			IsArchived: true,
+		},
+		{
+			Module:     Module{Path: "github.com/baz/qux", Version: "v2.0.0", Owner: "baz", Repo: "qux"},
+			IsArchived: true,
+		},
+	}
+
+	fileMatches := map[string][]FileMatch{
+		"github.com/foo/bar": {
+			{File: "audit/hash.go", Line: 14, ImportPath: "github.com/foo/bar"},
+			{File: "vault/policy.go", Line: 17, ImportPath: "github.com/foo/bar"},
+		},
+		"github.com/baz/qux": {
+			{File: "cmd/main.go", Line: 5, ImportPath: "github.com/baz/qux"},
+		},
+	}
+
+	output := captureStdout(t, func() {
+		PrintFiles(results, fileMatches)
+	})
+
+	if !strings.Contains(output, "github.com/baz/qux (1 file)") {
+		t.Errorf("should show singular 'file' for 1 match, got:\n%s", output)
+	}
+	if !strings.Contains(output, "github.com/foo/bar (2 files)") {
+		t.Errorf("should show '2 files', got:\n%s", output)
+	}
+	if !strings.Contains(output, "audit/hash.go:14") {
+		t.Errorf("should show file:line, got:\n%s", output)
+	}
+	if !strings.Contains(output, "vault/policy.go:17") {
+		t.Errorf("should show file:line, got:\n%s", output)
+	}
+}
+
+func TestPrintFiles_ZeroFiles(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/foo/bar", Version: "v1.0.0", Owner: "foo", Repo: "bar"},
+			IsArchived: true,
+		},
+	}
+
+	fileMatches := map[string][]FileMatch{}
+
+	output := captureStdout(t, func() {
+		PrintFiles(results, fileMatches)
+	})
+
+	if !strings.Contains(output, "github.com/foo/bar (0 files)") {
+		t.Errorf("modules with no imports should show 0 files, got:\n%s", output)
+	}
+}
+
+func TestPrintJSON_WithSourceFiles(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/foo/bar", Version: "v1.0.0", Direct: true, Owner: "foo", Repo: "bar"},
+			IsArchived: true,
+			ArchivedAt: time.Date(2024, 7, 22, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	fileMatches := map[string][]FileMatch{
+		"github.com/foo/bar": {
+			{File: "audit/hash.go", Line: 14, ImportPath: "github.com/foo/bar"},
+		},
+	}
+
+	output := captureStdout(t, func() {
+		PrintJSON(results, 0, false, fileMatches)
+	})
+
+	var out JSONOutput
+	if err := json.Unmarshal([]byte(output), &out); err != nil {
+		t.Fatalf("invalid JSON: %v\noutput: %s", err, output)
+	}
+
+	if len(out.Archived) != 1 {
+		t.Fatalf("expected 1 archived, got %d", len(out.Archived))
+	}
+	if len(out.Archived[0].SourceFiles) != 1 {
+		t.Fatalf("expected 1 source file, got %d", len(out.Archived[0].SourceFiles))
+	}
+	sf := out.Archived[0].SourceFiles[0]
+	if sf.File != "audit/hash.go" {
+		t.Errorf("source_files[0].file = %q, want %q", sf.File, "audit/hash.go")
+	}
+	if sf.Line != 14 {
+		t.Errorf("source_files[0].line = %d, want 14", sf.Line)
+	}
+	if sf.Import != "github.com/foo/bar" {
+		t.Errorf("source_files[0].import = %q, want %q", sf.Import, "github.com/foo/bar")
+	}
+}
+
+func TestPrintJSON_NoSourceFilesWhenNil(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/foo/bar", Version: "v1.0.0", Direct: true, Owner: "foo", Repo: "bar"},
+			IsArchived: true,
+		},
+	}
+
+	output := captureStdout(t, func() {
+		PrintJSON(results, 0, false, nil)
+	})
+
+	if strings.Contains(output, "source_files") {
+		t.Errorf("should not include source_files when fileMatches is nil, got:\n%s", output)
+	}
+}
+
+func TestPrintTree_WithFileCount(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/a/b", Version: "v1.0.0", Owner: "a", Repo: "b"},
+			IsArchived: true,
+			ArchivedAt: time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	allModules := []Module{
+		{Path: "github.com/a/b", Version: "v1.0.0", Owner: "a", Repo: "b", Direct: true},
+	}
+
+	graph := map[string][]string{
+		"mymodule":               {"github.com/a/b@v1.0.0"},
+		"github.com/a/b@v1.0.0": {},
+	}
+
+	fileMatches := map[string][]FileMatch{
+		"github.com/a/b": {
+			{File: "foo.go", Line: 5, ImportPath: "github.com/a/b"},
+			{File: "bar.go", Line: 10, ImportPath: "github.com/a/b"},
+		},
+	}
+
+	output := captureStdout(t, func() {
+		PrintTree(results, graph, allModules, fileMatches)
+	})
+
+	if !strings.Contains(output, "(2 files)") {
+		t.Errorf("tree output should show file count, got:\n%s", output)
+	}
+}
+
+func TestPluralize(t *testing.T) {
+	if got := pluralize(0, "file", "files"); got != "files" {
+		t.Errorf("pluralize(0) = %q, want %q", got, "files")
+	}
+	if got := pluralize(1, "file", "files"); got != "file" {
+		t.Errorf("pluralize(1) = %q, want %q", got, "file")
+	}
+	if got := pluralize(2, "file", "files"); got != "files" {
+		t.Errorf("pluralize(2) = %q, want %q", got, "files")
 	}
 }

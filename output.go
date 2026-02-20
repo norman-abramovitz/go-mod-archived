@@ -91,6 +91,42 @@ func PrintTable(results []RepoStatus, nonGitHubCount int, showAll bool) {
 	}
 }
 
+// PrintFiles outputs a section showing source files that import archived modules.
+func PrintFiles(results []RepoStatus, fileMatches map[string][]FileMatch) {
+	// Collect archived modules in sorted order
+	var archivedPaths []string
+	for _, r := range results {
+		if r.IsArchived {
+			archivedPaths = append(archivedPaths, r.Module.Path)
+		}
+	}
+	sort.Strings(archivedPaths)
+
+	fmt.Fprintf(os.Stderr, "\nSOURCE FILES IMPORTING ARCHIVED MODULES\n")
+
+	for _, modPath := range archivedPaths {
+		matches := fileMatches[modPath]
+		// Deduplicate by file (show each file only once per module)
+		uniqueFiles := make(map[string]bool)
+		for _, m := range matches {
+			uniqueFiles[m.File] = true
+		}
+
+		fmt.Fprintf(os.Stdout, "\n%s (%d %s)\n", modPath, len(uniqueFiles), pluralize(len(uniqueFiles), "file", "files"))
+		for _, m := range matches {
+			fmt.Fprintf(os.Stdout, "  %s:%d\n", m.File, m.Line)
+		}
+	}
+}
+
+// pluralize returns singular or plural form based on count.
+func pluralize(n int, singular, plural string) string {
+	if n == 1 {
+		return singular
+	}
+	return plural
+}
+
 // JSONOutput is the structure for JSON output mode.
 type JSONOutput struct {
 	Archived       []JSONModule `json:"archived"`
@@ -101,18 +137,27 @@ type JSONOutput struct {
 }
 
 type JSONModule struct {
-	Module     string `json:"module"`
-	Version    string `json:"version"`
-	Direct     bool   `json:"direct"`
-	Owner      string `json:"owner"`
-	Repo       string `json:"repo"`
-	ArchivedAt string `json:"archived_at,omitempty"`
-	PushedAt   string `json:"pushed_at,omitempty"`
-	Error      string `json:"error,omitempty"`
+	Module      string           `json:"module"`
+	Version     string           `json:"version"`
+	Direct      bool             `json:"direct"`
+	Owner       string           `json:"owner"`
+	Repo        string           `json:"repo"`
+	ArchivedAt  string           `json:"archived_at,omitempty"`
+	PushedAt    string           `json:"pushed_at,omitempty"`
+	Error       string           `json:"error,omitempty"`
+	SourceFiles []JSONSourceFile `json:"source_files,omitempty"`
 }
 
-// PrintJSON outputs results as JSON.
-func PrintJSON(results []RepoStatus, nonGitHubCount int, showAll bool) {
+// JSONSourceFile represents a source file match in JSON output.
+type JSONSourceFile struct {
+	File   string `json:"file"`
+	Line   int    `json:"line"`
+	Import string `json:"import"`
+}
+
+// PrintJSON outputs results as JSON. If fileMatches is non-nil, archived
+// modules will include source_files arrays.
+func PrintJSON(results []RepoStatus, nonGitHubCount int, showAll bool, fileMatches map[string][]FileMatch) {
 	out := JSONOutput{
 		SkippedNonGH: nonGitHubCount,
 		TotalChecked: len(results),
@@ -138,6 +183,15 @@ func PrintJSON(results []RepoStatus, nonGitHubCount int, showAll bool) {
 		case r.IsArchived:
 			if !r.ArchivedAt.IsZero() {
 				jm.ArchivedAt = r.ArchivedAt.Format("2006-01-02T15:04:05Z")
+			}
+			if fileMatches != nil {
+				for _, fm := range fileMatches[r.Module.Path] {
+					jm.SourceFiles = append(jm.SourceFiles, JSONSourceFile{
+						File:   fm.File,
+						Line:   fm.Line,
+						Import: fm.ImportPath,
+					})
+				}
 			}
 			out.Archived = append(out.Archived, jm)
 		default:
@@ -175,8 +229,9 @@ func formatArchivedLine(modPath, version string, rs RepoStatus) string {
 }
 
 // PrintTree outputs a dependency tree showing which direct dependencies
-// pull in archived indirect dependencies.
-func PrintTree(results []RepoStatus, graph map[string][]string, allModules []Module) {
+// pull in archived indirect dependencies. If fileMatches is non-nil,
+// file counts are appended to archived labels.
+func PrintTree(results []RepoStatus, graph map[string][]string, allModules []Module, fileMatches map[string][]FileMatch) {
 	// Build lookup from owner/repo → RepoStatus (for archived/pushed dates)
 	statusByRepo := make(map[string]RepoStatus)
 	archivedPaths := make(map[string]bool)
@@ -251,10 +306,24 @@ func PrintTree(results []RepoStatus, graph map[string][]string, allModules []Mod
 
 	fmt.Fprintf(os.Stderr, "\nDEPENDENCY TREE (archived dependencies marked with [ARCHIVED])\n\n")
 
+	// fileCountSuffix returns " (N files)" if fileMatches has entries for modPath.
+	fileCountSuffix := func(modPath string) string {
+		if fileMatches == nil {
+			return ""
+		}
+		matches := fileMatches[modPath]
+		uniqueFiles := make(map[string]bool)
+		for _, m := range matches {
+			uniqueFiles[m.File] = true
+		}
+		n := len(uniqueFiles)
+		return fmt.Sprintf(" (%d %s)", n, pluralize(n, "file", "files"))
+	}
+
 	if rootKey == "" {
 		for _, r := range results {
 			if r.IsArchived {
-				fmt.Printf("  %s\n", formatArchivedLine(r.Module.Path, r.Module.Version, r))
+				fmt.Printf("  %s%s\n", formatArchivedLine(r.Module.Path, r.Module.Version, r), fileCountSuffix(r.Module.Path))
 			}
 		}
 		return
@@ -290,9 +359,9 @@ func PrintTree(results []RepoStatus, graph map[string][]string, allModules []Mod
 	for _, e := range entries {
 		if archivedPaths[e.directPath] {
 			if rs, ok := getStatus(e.directPath); ok {
-				fmt.Printf("%s\n", formatArchivedLine(e.directPath, versionByPath[e.directPath], rs))
+				fmt.Printf("%s%s\n", formatArchivedLine(e.directPath, versionByPath[e.directPath], rs), fileCountSuffix(e.directPath))
 			} else {
-				fmt.Printf("%s [ARCHIVED]\n", e.directPath)
+				fmt.Printf("%s [ARCHIVED]%s\n", e.directPath, fileCountSuffix(e.directPath))
 			}
 		} else {
 			ver := versionByPath[e.directPath]
@@ -313,9 +382,9 @@ func PrintTree(results []RepoStatus, graph map[string][]string, allModules []Mod
 				connector = "└── "
 			}
 			if rs, ok := getStatus(a); ok {
-				fmt.Printf("  %s%s\n", connector, formatArchivedLine(a, versionByPath[a], rs))
+				fmt.Printf("  %s%s%s\n", connector, formatArchivedLine(a, versionByPath[a], rs), fileCountSuffix(a))
 			} else {
-				fmt.Printf("  %s%s [ARCHIVED]\n", connector, a)
+				fmt.Printf("  %s%s [ARCHIVED]%s\n", connector, a, fileCountSuffix(a))
 			}
 		}
 	}
