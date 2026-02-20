@@ -16,11 +16,17 @@ func main() {
 	directOnly := flag.Bool("direct-only", false, "Only check direct dependencies")
 	workers := flag.Int("workers", 50, "Number of repos per GitHub GraphQL batch request")
 	treeFlag := flag.Bool("tree", false, "Show dependency tree for archived modules (uses go mod graph)")
+	timeFlag := flag.Bool("time", false, "Include time in date output (2006-01-02 15:04:05 instead of 2006-01-02)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: go-mod-archived [flags] [path/to/go.mod]\n\nDetect archived GitHub dependencies in a Go project.\n\nFlags:\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	// Set date format
+	if *timeFlag {
+		dateFmt = "2006-01-02 15:04:05"
+	}
 
 	// Determine go.mod path
 	gomodPath := "go.mod"

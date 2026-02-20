@@ -111,6 +111,48 @@ func TestFindArchivedTransitive_NoArchived(t *testing.T) {
 	}
 }
 
+func TestFmtDate(t *testing.T) {
+	ts := time.Date(2024, 7, 22, 14, 30, 45, 0, time.UTC)
+
+	// Default date-only format
+	dateFmt = "2006-01-02"
+	if got := fmtDate(ts); got != "2024-07-22" {
+		t.Errorf("date-only: got %q, want %q", got, "2024-07-22")
+	}
+
+	// With time
+	dateFmt = "2006-01-02 15:04:05"
+	if got := fmtDate(ts); got != "2024-07-22 14:30:45" {
+		t.Errorf("with time: got %q, want %q", got, "2024-07-22 14:30:45")
+	}
+
+	// Zero time
+	if got := fmtDate(time.Time{}); got != "" {
+		t.Errorf("zero time: got %q, want empty", got)
+	}
+
+	// Reset
+	dateFmt = "2006-01-02"
+}
+
+func TestFormatArchivedLine_WithTime(t *testing.T) {
+	dateFmt = "2006-01-02 15:04:05"
+	defer func() { dateFmt = "2006-01-02" }()
+
+	rs := RepoStatus{
+		ArchivedAt: time.Date(2024, 7, 22, 14, 30, 45, 0, time.UTC),
+		PushedAt:   time.Date(2021, 5, 5, 9, 15, 0, 0, time.UTC),
+	}
+
+	got := formatArchivedLine("github.com/foo/bar", "v1.0.0", rs)
+	if !strings.Contains(got, "2024-07-22 14:30:45") {
+		t.Errorf("expected time in archived date, got %q", got)
+	}
+	if !strings.Contains(got, "2021-05-05 09:15:00") {
+		t.Errorf("expected time in pushed date, got %q", got)
+	}
+}
+
 func TestFormatArchivedLine(t *testing.T) {
 	rs := RepoStatus{
 		ArchivedAt: time.Date(2024, 7, 22, 0, 0, 0, 0, time.UTC),

@@ -7,7 +7,20 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
+	"time"
 )
+
+// dateFmt controls the date format used in output. Default is date-only;
+// set to "2006-01-02 15:04:05" with --time flag to include time.
+var dateFmt = "2006-01-02"
+
+// fmtDate formats a time using the current dateFmt setting.
+func fmtDate(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format(dateFmt)
+}
 
 // PrintTable outputs archived (or all) results in a human-readable table.
 func PrintTable(results []RepoStatus, nonGitHubCount int, showAll bool) {
@@ -39,8 +52,8 @@ func PrintTable(results []RepoStatus, nonGitHubCount int, showAll bool) {
 			if r.Module.Direct {
 				direct = "direct"
 			}
-			archivedAt := r.ArchivedAt.Format("2006-01-02")
-			pushedAt := r.PushedAt.Format("2006-01-02")
+			archivedAt := fmtDate(r.ArchivedAt)
+			pushedAt := fmtDate(r.PushedAt)
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, archivedAt, pushedAt)
 		}
 		w.Flush()
@@ -67,7 +80,7 @@ func PrintTable(results []RepoStatus, nonGitHubCount int, showAll bool) {
 			if r.Module.Direct {
 				direct = "direct"
 			}
-			pushedAt := r.PushedAt.Format("2006-01-02")
+			pushedAt := fmtDate(r.PushedAt)
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, pushedAt)
 		}
 		w.Flush()
@@ -151,11 +164,11 @@ func formatArchivedLine(modPath, version string, rs RepoStatus) string {
 	b.WriteString(" [ARCHIVED")
 	if !rs.ArchivedAt.IsZero() {
 		b.WriteString(" ")
-		b.WriteString(rs.ArchivedAt.Format("2006-01-02"))
+		b.WriteString(fmtDate(rs.ArchivedAt))
 	}
 	if !rs.PushedAt.IsZero() {
 		b.WriteString(", last pushed ")
-		b.WriteString(rs.PushedAt.Format("2006-01-02"))
+		b.WriteString(fmtDate(rs.PushedAt))
 	}
 	b.WriteString("]")
 	return b.String()
