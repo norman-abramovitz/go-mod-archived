@@ -26,10 +26,10 @@ go build -o go-mod-archived .
 ## Usage
 
 ```
-go-mod-archived [flags] [path/to/go.mod]
+go-mod-archived [flags] [path/to/go.mod | path/to/dir]
 ```
 
-If no path is given, looks for `go.mod` in the current directory.
+If no path is given, looks for `go.mod` in the current directory. You can also pass a directory path and the tool will look for `go.mod` inside it. Flags can appear before or after the path.
 
 ### Flags
 

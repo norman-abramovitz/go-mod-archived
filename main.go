@@ -23,7 +23,7 @@ func main() {
 	filesFlag := flag.Bool("files", false, "Show source files that import archived modules")
 	timeFlag := flag.Bool("time", false, "Include time in date output (2006-01-02 15:04:05 instead of 2006-01-02)")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: go-mod-archived [flags] [path/to/go.mod]\n\nDetect archived GitHub dependencies in a Go project.\n\nFlags:\n")
+		fmt.Fprintf(os.Stderr, "Usage: go-mod-archived [flags] [path/to/go.mod | path/to/dir]\n\nDetect archived GitHub dependencies in a Go project.\n\nFlags:\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -42,6 +42,10 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(2)
+	}
+	// If the path is a directory, look for go.mod inside it.
+	if info, err := os.Stat(gomodPath); err == nil && info.IsDir() {
+		gomodPath = filepath.Join(gomodPath, "go.mod")
 	}
 
 	// Parse go.mod
