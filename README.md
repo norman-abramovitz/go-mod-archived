@@ -21,6 +21,7 @@ go build -o go-mod-archived .
 ## Prerequisites
 
 - [GitHub CLI](https://cli.github.com/) (`gh`) installed and authenticated — used to obtain your GitHub API token
+- [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`) — required only for `--files` flag
 
 ## Usage
 
@@ -38,6 +39,8 @@ If no path is given, looks for `go.mod` in the current directory.
 | `--all` | Show all modules, not just archived ones |
 | `--direct-only` | Only check direct dependencies (skip indirect) |
 | `--tree` | Show dependency tree for archived modules (uses `go mod graph`) |
+| `--files` | Show source files that import archived modules (requires `rg`) |
+| `--time` | Include time in date output (2006-01-02 15:04:05 instead of 2006-01-02) |
 | `--workers N` | Repos per GitHub GraphQL batch request (default 50) |
 
 ### Exit codes
@@ -98,6 +101,38 @@ github.com/hashicorp/go-discover
   └── github.com/pkg/errors [ARCHIVED]
 github.com/mitchellh/copystructure [ARCHIVED]
   └── github.com/mitchellh/reflectwalk [ARCHIVED]
+```
+
+### Source file scanning
+
+Shows which source files import each archived module, helping prioritize replacements:
+
+```
+$ go-mod-archived --files
+...
+SOURCE FILES IMPORTING ARCHIVED MODULES
+
+github.com/mitchellh/copystructure (10 files)
+  audit/hashstructure.go:14
+  sdk/logical/request.go:14
+  vault/acl.go:21
+  vault/mount_entry.go:14
+  vault/policy.go:17
+  ...
+
+github.com/mitchellh/reflectwalk (1 file)
+  audit/hashstructure.go:15
+
+github.com/pkg/errors (0 files)
+```
+
+Combines with `--json` to add `source_files` arrays, or with `--tree` to append file counts:
+
+```
+$ go-mod-archived --files --tree
+github.com/Masterminds/sprig/v3@v3.2.3
+  ├── github.com/mitchellh/copystructure@v1.2.0 [ARCHIVED 2024-07-22] (10 files)
+  └── github.com/mitchellh/reflectwalk@v1.0.2 [ARCHIVED 2024-07-22] (1 file)
 ```
 
 ### JSON output
