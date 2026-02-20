@@ -156,6 +156,49 @@ $ go-mod-archived --json
 }
 ```
 
+### JSON dependency tree
+
+Combine `--tree --json` for a structured tree showing which direct dependencies pull in archived transitive deps:
+
+```
+$ go-mod-archived --tree --json
+{
+  "tree": [
+    {
+      "module": "github.com/Masterminds/sprig/v3",
+      "version": "v3.2.3",
+      "archived": false,
+      "archived_dependencies": [
+        {
+          "module": "github.com/mitchellh/copystructure",
+          "version": "v1.2.0",
+          "archived_at": "2024-07-22T20:44:18Z",
+          "pushed_at": "2021-05-05T17:08:29Z"
+        },
+        {
+          "module": "github.com/mitchellh/reflectwalk",
+          "version": "v1.0.2",
+          "archived_at": "2024-07-22T20:48:05Z",
+          "pushed_at": "2022-04-21T16:48:49Z"
+        }
+      ]
+    },
+    {
+      "module": "github.com/mitchellh/copystructure",
+      "version": "v1.2.0",
+      "archived": true,
+      "archived_at": "2024-07-22T20:44:18Z",
+      "pushed_at": "2021-05-05T17:08:29Z",
+      "archived_dependencies": []
+    }
+  ],
+  "skipped_non_github": 61,
+  "total_checked": 234
+}
+```
+
+Add `--files` to include `source_files` arrays on archived entries.
+
 ## How it works
 
 1. Parses `go.mod` using `golang.org/x/mod/modfile`
