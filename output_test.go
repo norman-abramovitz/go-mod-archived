@@ -1,0 +1,459 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"os"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestStripVersion(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"github.com/foo/bar@v1.2.3", "github.com/foo/bar"},
+		{"github.com/foo/bar/v2@v2.0.0", "github.com/foo/bar/v2"},
+		{"github.com/foo/bar@v0.0.0-20210821155943-2d9075ca8770", "github.com/foo/bar"},
+		{"github.com/foo/bar", "github.com/foo/bar"},         // no version
+		{"cel.dev/expr@v0.25.1", "cel.dev/expr"},
+		{"", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := stripVersion(tt.input)
+			if got != tt.want {
+				t.Errorf("stripVersion(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAllSeen(t *testing.T) {
+	seen := map[string]bool{"a": true, "b": true}
+
+	if !allSeen([]string{"a", "b"}, seen) {
+		t.Error("expected true when all items seen")
+	}
+	if !allSeen([]string{}, seen) {
+		t.Error("expected true for empty slice")
+	}
+	if allSeen([]string{"a", "c"}, seen) {
+		t.Error("expected false when 'c' not seen")
+	}
+}
+
+func TestFindArchivedTransitive(t *testing.T) {
+	graph := map[string][]string{
+		"root":                         {"github.com/a/b@v1.0.0", "github.com/c/d@v1.0.0"},
+		"github.com/a/b@v1.0.0":       {"github.com/x/y@v1.0.0"},
+		"github.com/c/d@v1.0.0":       {"github.com/x/y@v1.0.0", "github.com/e/f@v1.0.0"},
+		"github.com/x/y@v1.0.0":       {},
+		"github.com/e/f@v1.0.0":       {},
+	}
+
+	archivedPaths := map[string]bool{
+		"github.com/x/y": true,
+	}
+
+	result := findArchivedTransitive("github.com/a/b@v1.0.0", graph, archivedPaths, make(map[string]bool))
+	if len(result) != 1 || result[0] != "github.com/x/y" {
+		t.Errorf("expected [github.com/x/y], got %v", result)
+	}
+}
+
+func TestFindArchivedTransitive_Cycle(t *testing.T) {
+	// Ensure cycles don't cause infinite loops
+	graph := map[string][]string{
+		"a@v1": {"b@v1"},
+		"b@v1": {"a@v1"},
+	}
+
+	archivedPaths := map[string]bool{"b": true}
+
+	result := findArchivedTransitive("a@v1", graph, archivedPaths, make(map[string]bool))
+	if len(result) != 1 || result[0] != "b" {
+		t.Errorf("expected [b], got %v", result)
+	}
+}
+
+func TestFindArchivedTransitive_Deep(t *testing.T) {
+	graph := map[string][]string{
+		"a@v1": {"b@v1"},
+		"b@v1": {"c@v1"},
+		"c@v1": {"d@v1"},
+		"d@v1": {},
+	}
+
+	archivedPaths := map[string]bool{"d": true}
+
+	result := findArchivedTransitive("a@v1", graph, archivedPaths, make(map[string]bool))
+	if len(result) != 1 || result[0] != "d" {
+		t.Errorf("expected [d], got %v", result)
+	}
+}
+
+func TestFindArchivedTransitive_NoArchived(t *testing.T) {
+	graph := map[string][]string{
+		"a@v1": {"b@v1"},
+		"b@v1": {},
+	}
+
+	archivedPaths := map[string]bool{}
+
+	result := findArchivedTransitive("a@v1", graph, archivedPaths, make(map[string]bool))
+	if len(result) != 0 {
+		t.Errorf("expected empty, got %v", result)
+	}
+}
+
+// captureStdout captures stdout output during fn execution.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+
+	fn()
+
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	return buf.String()
+}
+
+func TestPrintJSON_ArchivedOnly(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/foo/bar", Version: "v1.0.0", Direct: true, Owner: "foo", Repo: "bar"},
+			IsArchived: true,
+			ArchivedAt: time.Date(2024, 7, 22, 0, 0, 0, 0, time.UTC),
+			PushedAt:   time.Date(2021, 5, 5, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			Module:     Module{Path: "github.com/baz/qux", Version: "v2.0.0", Direct: false, Owner: "baz", Repo: "qux"},
+			IsArchived: false,
+			PushedAt:   time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	output := captureStdout(t, func() {
+		PrintJSON(results, 5, false)
+	})
+
+	var out JSONOutput
+	if err := json.Unmarshal([]byte(output), &out); err != nil {
+		t.Fatalf("invalid JSON: %v\noutput: %s", err, output)
+	}
+
+	if len(out.Archived) != 1 {
+		t.Errorf("expected 1 archived, got %d", len(out.Archived))
+	}
+	if out.Archived[0].Module != "github.com/foo/bar" {
+		t.Errorf("archived module = %q", out.Archived[0].Module)
+	}
+	if out.Active != nil {
+		t.Error("expected no active modules when showAll=false")
+	}
+	if out.SkippedNonGH != 5 {
+		t.Errorf("skipped = %d, want 5", out.SkippedNonGH)
+	}
+	if out.TotalChecked != 2 {
+		t.Errorf("total = %d, want 2", out.TotalChecked)
+	}
+}
+
+func TestPrintJSON_ShowAll(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/foo/bar", Version: "v1.0.0", Direct: true, Owner: "foo", Repo: "bar"},
+			IsArchived: false,
+			PushedAt:   time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	output := captureStdout(t, func() {
+		PrintJSON(results, 0, true)
+	})
+
+	var out JSONOutput
+	if err := json.Unmarshal([]byte(output), &out); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	if len(out.Active) != 1 {
+		t.Errorf("expected 1 active module with showAll=true, got %d", len(out.Active))
+	}
+}
+
+func TestPrintJSON_NotFound(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:   Module{Path: "github.com/gone/repo", Owner: "gone", Repo: "repo"},
+			NotFound: true,
+			Error:    "Could not resolve",
+		},
+	}
+
+	output := captureStdout(t, func() {
+		PrintJSON(results, 0, false)
+	})
+
+	var out JSONOutput
+	if err := json.Unmarshal([]byte(output), &out); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	if len(out.NotFound) != 1 {
+		t.Errorf("expected 1 not_found, got %d", len(out.NotFound))
+	}
+	if out.NotFound[0].Error != "Could not resolve" {
+		t.Errorf("error = %q", out.NotFound[0].Error)
+	}
+}
+
+func TestPrintJSON_EmptyArchived(t *testing.T) {
+	output := captureStdout(t, func() {
+		PrintJSON(nil, 0, false)
+	})
+
+	var out JSONOutput
+	if err := json.Unmarshal([]byte(output), &out); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	// Archived should be empty array, not null
+	if !strings.Contains(output, `"archived": []`) {
+		t.Error("expected archived to be empty array, not null")
+	}
+}
+
+func TestPrintTable_ContainsArchivedModule(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/foo/bar", Version: "v1.0.0", Direct: true, Owner: "foo", Repo: "bar"},
+			IsArchived: true,
+			ArchivedAt: time.Date(2024, 7, 22, 0, 0, 0, 0, time.UTC),
+			PushedAt:   time.Date(2021, 5, 5, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	output := captureStdout(t, func() {
+		PrintTable(results, 0, false)
+	})
+
+	if !strings.Contains(output, "github.com/foo/bar") {
+		t.Error("table output should contain the module path")
+	}
+	if !strings.Contains(output, "2024-07-22") {
+		t.Error("table output should contain archived date")
+	}
+	if !strings.Contains(output, "direct") {
+		t.Error("table output should show 'direct'")
+	}
+}
+
+func TestPrintTable_NoArchived(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/foo/bar", Version: "v1.0.0", Direct: true, Owner: "foo", Repo: "bar"},
+			IsArchived: false,
+			PushedAt:   time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	// Should not print any table to stdout when no archived
+	output := captureStdout(t, func() {
+		PrintTable(results, 3, false)
+	})
+
+	if strings.Contains(output, "github.com/foo/bar") {
+		t.Error("should not show active modules when showAll=false")
+	}
+}
+
+func TestPrintTable_ShowAll(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/foo/bar", Version: "v1.0.0", Direct: false, Owner: "foo", Repo: "bar"},
+			IsArchived: false,
+			PushedAt:   time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			Module:     Module{Path: "github.com/archived/repo", Version: "v0.5.0", Direct: true, Owner: "archived", Repo: "repo"},
+			IsArchived: true,
+			ArchivedAt: time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC),
+			PushedAt:   time.Date(2024, 5, 1, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	output := captureStdout(t, func() {
+		PrintTable(results, 2, true)
+	})
+
+	if !strings.Contains(output, "github.com/archived/repo") {
+		t.Error("should show archived module")
+	}
+	if !strings.Contains(output, "github.com/foo/bar") {
+		t.Error("should show active module when showAll=true")
+	}
+	if !strings.Contains(output, "indirect") {
+		t.Error("should show 'indirect' for indirect dep")
+	}
+}
+
+func TestPrintTable_NotFoundModule(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:   Module{Path: "github.com/gone/repo", Owner: "gone", Repo: "repo"},
+			NotFound: true,
+			Error:    "Could not resolve",
+		},
+	}
+
+	// NotFound goes to stderr, stdout should be empty
+	output := captureStdout(t, func() {
+		PrintTable(results, 0, false)
+	})
+
+	if strings.Contains(output, "github.com/gone/repo") {
+		t.Error("not-found modules should go to stderr, not stdout")
+	}
+}
+
+func TestPrintTree_BasicTree(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/x/y", Owner: "x", Repo: "y"},
+			IsArchived: true,
+		},
+	}
+
+	allModules := []Module{
+		{Path: "github.com/a/b", Owner: "a", Repo: "b", Direct: true},
+		{Path: "github.com/x/y", Owner: "x", Repo: "y", Direct: false},
+	}
+
+	graph := map[string][]string{
+		"mymodule":                   {"github.com/a/b@v1.0.0"},
+		"github.com/a/b@v1.0.0":     {"github.com/x/y@v0.1.0"},
+		"github.com/x/y@v0.1.0":     {},
+	}
+
+	output := captureStdout(t, func() {
+		PrintTree(results, graph, allModules)
+	})
+
+	if !strings.Contains(output, "github.com/a/b") {
+		t.Error("should show direct dep that pulls in archived module")
+	}
+	if !strings.Contains(output, "github.com/x/y [ARCHIVED]") {
+		t.Error("should show archived transitive dep")
+	}
+}
+
+func TestPrintTree_DirectArchived(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/a/b", Owner: "a", Repo: "b"},
+			IsArchived: true,
+		},
+	}
+
+	allModules := []Module{
+		{Path: "github.com/a/b", Owner: "a", Repo: "b", Direct: true},
+	}
+
+	graph := map[string][]string{
+		"mymodule":               {"github.com/a/b@v1.0.0"},
+		"github.com/a/b@v1.0.0": {},
+	}
+
+	output := captureStdout(t, func() {
+		PrintTree(results, graph, allModules)
+	})
+
+	if !strings.Contains(output, "github.com/a/b [ARCHIVED]") {
+		t.Error("should show direct dep as archived")
+	}
+}
+
+func TestPrintTree_NoArchived(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/a/b", Owner: "a", Repo: "b"},
+			IsArchived: false,
+		},
+	}
+
+	allModules := []Module{
+		{Path: "github.com/a/b", Owner: "a", Repo: "b", Direct: true},
+	}
+
+	graph := map[string][]string{
+		"mymodule":               {"github.com/a/b@v1.0.0"},
+		"github.com/a/b@v1.0.0": {},
+	}
+
+	output := captureStdout(t, func() {
+		PrintTree(results, graph, allModules)
+	})
+
+	if output != "" {
+		t.Errorf("expected no stdout output when no archived deps, got %q", output)
+	}
+}
+
+func TestPrintTree_EmptyGraph(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/a/b", Owner: "a", Repo: "b"},
+			IsArchived: true,
+		},
+	}
+
+	allModules := []Module{
+		{Path: "github.com/a/b", Owner: "a", Repo: "b", Direct: true},
+	}
+
+	// Empty graph — no root key found, fallback to flat list
+	graph := map[string][]string{}
+
+	output := captureStdout(t, func() {
+		PrintTree(results, graph, allModules)
+	})
+
+	if !strings.Contains(output, "github.com/a/b [ARCHIVED]") {
+		t.Error("fallback should still list archived deps")
+	}
+}
+
+func TestParseModGraphLines(t *testing.T) {
+	input := `root github.com/foo/bar@v1.0.0
+root github.com/baz/qux@v2.0.0
+github.com/foo/bar@v1.0.0 github.com/x/y@v0.1.0
+`
+	graph := make(map[string][]string)
+	for _, line := range strings.Split(strings.TrimSpace(input), "\n") {
+		parts := strings.Fields(line)
+		if len(parts) == 2 {
+			graph[parts[0]] = append(graph[parts[0]], parts[1])
+		}
+	}
+
+	if len(graph["root"]) != 2 {
+		t.Errorf("root should have 2 children, got %d", len(graph["root"]))
+	}
+	if len(graph["github.com/foo/bar@v1.0.0"]) != 1 {
+		t.Errorf("foo/bar should have 1 child, got %d", len(graph["github.com/foo/bar@v1.0.0"]))
+	}
+}

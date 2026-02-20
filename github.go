@@ -65,12 +65,11 @@ func CheckRepos(modules []Module, batchSize int) ([]RepoStatus, error) {
 	return results, nil
 }
 
-func queryBatch(token string, modules []Module) ([]RepoStatus, error) {
-	// Build aliased GraphQL query
+// buildGraphQLQuery constructs a batched GraphQL query for the given modules.
+func buildGraphQLQuery(modules []Module) string {
 	var qb strings.Builder
 	qb.WriteString("{\n")
 	for i, m := range modules {
-		// Alias must start with a letter, use "r" prefix
 		fmt.Fprintf(&qb, "  r%d: repository(owner: %q, name: %q) {\n", i, m.Owner, m.Repo)
 		qb.WriteString("    isArchived\n")
 		qb.WriteString("    archivedAt\n")
@@ -78,47 +77,20 @@ func queryBatch(token string, modules []Module) ([]RepoStatus, error) {
 		qb.WriteString("  }\n")
 	}
 	qb.WriteString("}\n")
+	return qb.String()
+}
 
-	reqBody, err := json.Marshal(graphQLRequest{Query: qb.String()})
-	if err != nil {
-		return nil, err
-	}
+// gqlResponse represents the GitHub GraphQL API response.
+type gqlResponse struct {
+	Data   map[string]*repoData `json:"data"`
+	Errors []struct {
+		Message string   `json:"message"`
+		Path    []string `json:"path"`
+	} `json:"errors"`
+}
 
-	req, err := http.NewRequest("POST", "https://api.github.com/graphql", bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("GitHub API request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response: %w", err)
-	}
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("GitHub API returned %d: %s", resp.StatusCode, string(body))
-	}
-
-	// Parse response — repos that don't exist come back as null with errors
-	var gqlResp struct {
-		Data   map[string]*repoData `json:"data"`
-		Errors []struct {
-			Message string   `json:"message"`
-			Path    []string `json:"path"`
-		} `json:"errors"`
-	}
-	if err := json.Unmarshal(body, &gqlResp); err != nil {
-		return nil, fmt.Errorf("parsing response: %w", err)
-	}
-
-	// Build a set of aliases that had errors (not found / access denied)
+// parseGraphQLResponse converts a parsed GraphQL response into RepoStatus results.
+func parseGraphQLResponse(gqlResp gqlResponse, modules []Module) []RepoStatus {
 	errorAliases := make(map[string]string)
 	for _, e := range gqlResp.Errors {
 		if len(e.Path) > 0 {
@@ -149,7 +121,45 @@ func queryBatch(token string, modules []Module) ([]RepoStatus, error) {
 
 		results[i] = rs
 	}
-	return results, nil
+	return results
+}
+
+func queryBatch(token string, modules []Module) ([]RepoStatus, error) {
+	query := buildGraphQLQuery(modules)
+
+	reqBody, err := json.Marshal(graphQLRequest{Query: query})
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", "https://api.github.com/graphql", bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GitHub API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response: %w", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("GitHub API returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var gqlResp gqlResponse
+	if err := json.Unmarshal(body, &gqlResp); err != nil {
+		return nil, fmt.Errorf("parsing response: %w", err)
+	}
+
+	return parseGraphQLResponse(gqlResp, modules), nil
 }
 
 type repoData struct {
