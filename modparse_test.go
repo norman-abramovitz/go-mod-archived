@@ -149,6 +149,33 @@ func TestParseGoMod_InvalidSyntax(t *testing.T) {
 	}
 }
 
+func TestModuleName(t *testing.T) {
+	gomod := `module example.com/myapp
+
+go 1.21
+
+require github.com/foo/bar v1.0.0
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "go.mod")
+	os.WriteFile(path, []byte(gomod), 0644)
+
+	name, err := ModuleName(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != "example.com/myapp" {
+		t.Errorf("expected example.com/myapp, got %s", name)
+	}
+}
+
+func TestModuleName_FileNotFound(t *testing.T) {
+	_, err := ModuleName("/nonexistent/go.mod")
+	if err == nil {
+		t.Error("expected error for nonexistent file")
+	}
+}
+
 func TestFilterGitHub_DeduplicatesMultiPathRepos(t *testing.T) {
 	modules := []Module{
 		{Path: "github.com/openbao/openbao/api/v2", Version: "v2.0.0", Direct: true, Owner: "openbao", Repo: "openbao"},

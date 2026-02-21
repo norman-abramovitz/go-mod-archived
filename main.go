@@ -22,6 +22,7 @@ func main() {
 	treeFlag := flag.Bool("tree", false, "Show dependency tree for archived modules (uses go mod graph)")
 	filesFlag := flag.Bool("files", false, "Show source files that import archived modules")
 	timeFlag := flag.Bool("time", false, "Include time in date output (2006-01-02 15:04:05 instead of 2006-01-02)")
+	recursiveFlag := flag.Bool("recursive", false, "Scan all go.mod files in the directory tree")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: go-mod-archived [flags] [path/to/go.mod | path/to/dir]\n\nDetect archived GitHub dependencies in a Go project.\n\nFlags:\n")
 		flag.PrintDefaults()
@@ -33,17 +34,38 @@ func main() {
 		dateFmt = "2006-01-02 15:04:05"
 	}
 
-	// Determine go.mod path
-	gomodPath := "go.mod"
+	// Determine input path
+	inputPath := "."
 	if flag.NArg() > 0 {
-		gomodPath = flag.Arg(0)
+		inputPath = flag.Arg(0)
 	}
-	gomodPath, err := filepath.Abs(gomodPath)
+	inputPath, err := filepath.Abs(inputPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(2)
 	}
-	// If the path is a directory, look for go.mod inside it.
+
+	// Recursive mode: scan directory tree for all go.mod files
+	if *recursiveFlag {
+		rootDir := inputPath
+		if info, statErr := os.Stat(rootDir); statErr != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", statErr)
+			os.Exit(2)
+		} else if !info.IsDir() {
+			rootDir = filepath.Dir(rootDir)
+		}
+		os.Exit(runRecursive(rootDir, runConfig{
+			jsonMode:   *jsonFlag,
+			showAll:    *allFlag,
+			directOnly: *directOnly,
+			workers:    *workers,
+			treeMode:   *treeFlag,
+			filesMode:  *filesFlag,
+		}))
+	}
+
+	// Single-module mode
+	gomodPath := inputPath
 	if info, err := os.Stat(gomodPath); err == nil && info.IsDir() {
 		gomodPath = filepath.Join(gomodPath, "go.mod")
 	}

@@ -59,6 +59,22 @@ func extractGitHub(path string) (owner, repo string) {
 	return parts[1], parts[2]
 }
 
+// ModuleName reads the module path (the "module" directive) from a go.mod file.
+func ModuleName(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	f, err := modfile.Parse(path, data, nil)
+	if err != nil {
+		return "", err
+	}
+	if f.Module == nil {
+		return "", fmt.Errorf("no module directive in %s", path)
+	}
+	return f.Module.Mod.Path, nil
+}
+
 // FilterGitHub separates modules into GitHub and non-GitHub.
 // GitHub modules are deduplicated by owner/repo.
 func FilterGitHub(modules []Module, directOnly bool) (github []Module, nonGitHubCount int) {

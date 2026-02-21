@@ -1,0 +1,151 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func TestFindGoModFiles(t *testing.T) {
+	// Create a temp directory tree with go.mod files
+	root := t.TempDir()
+
+	// Root go.mod
+	os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/root\n"), 0644)
+
+	// Subdirectory with go.mod
+	os.MkdirAll(filepath.Join(root, "api"), 0755)
+	os.WriteFile(filepath.Join(root, "api", "go.mod"), []byte("module example.com/root/api\n"), 0644)
+
+	// Nested subdirectory with go.mod
+	os.MkdirAll(filepath.Join(root, "sdk", "v2"), 0755)
+	os.WriteFile(filepath.Join(root, "sdk", "go.mod"), []byte("module example.com/root/sdk\n"), 0644)
+
+	// vendor/ should be skipped
+	os.MkdirAll(filepath.Join(root, "vendor", "lib"), 0755)
+	os.WriteFile(filepath.Join(root, "vendor", "lib", "go.mod"), []byte("module vendor/lib\n"), 0644)
+
+	// testdata/ should be skipped
+	os.MkdirAll(filepath.Join(root, "testdata"), 0755)
+	os.WriteFile(filepath.Join(root, "testdata", "go.mod"), []byte("module testdata/mod\n"), 0644)
+
+	// Hidden directory should be skipped
+	os.MkdirAll(filepath.Join(root, ".hidden"), 0755)
+	os.WriteFile(filepath.Join(root, ".hidden", "go.mod"), []byte("module hidden/mod\n"), 0644)
+
+	paths, err := findGoModFiles(root)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should find exactly 3: root, api, sdk
+	if len(paths) != 3 {
+		t.Fatalf("expected 3 go.mod files, got %d: %v", len(paths), paths)
+	}
+
+	// Verify the found paths are the expected ones
+	expected := map[string]bool{
+		filepath.Join(root, "go.mod"):          true,
+		filepath.Join(root, "api", "go.mod"):   true,
+		filepath.Join(root, "sdk", "go.mod"):   true,
+	}
+	for _, p := range paths {
+		if !expected[p] {
+			t.Errorf("unexpected go.mod found: %s", p)
+		}
+	}
+}
+
+func TestFindGoModFiles_NoGoMod(t *testing.T) {
+	root := t.TempDir()
+	paths, err := findGoModFiles(root)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(paths) != 0 {
+		t.Fatalf("expected 0 go.mod files, got %d", len(paths))
+	}
+}
+
+func TestApplyStatus(t *testing.T) {
+	statusMap := map[string]RepoStatus{
+		"foo/bar": {
+			IsArchived: true,
+			ArchivedAt: time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC),
+			PushedAt:   time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC),
+		},
+		"baz/qux": {
+			IsArchived: false,
+			PushedAt:   time.Date(2024, 12, 1, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	modules := []Module{
+		{Path: "github.com/foo/bar", Version: "v1.0.0", Direct: true, Owner: "foo", Repo: "bar"},
+		{Path: "github.com/baz/qux", Version: "v2.0.0", Direct: false, Owner: "baz", Repo: "qux"},
+		{Path: "github.com/unknown/repo", Version: "v0.1.0", Direct: false, Owner: "unknown", Repo: "repo"},
+	}
+
+	results := applyStatus(modules, statusMap)
+
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+
+	// First module: archived
+	if !results[0].IsArchived {
+		t.Error("expected foo/bar to be archived")
+	}
+	if results[0].Module.Path != "github.com/foo/bar" {
+		t.Errorf("expected module path github.com/foo/bar, got %s", results[0].Module.Path)
+	}
+	if results[0].ArchivedAt.IsZero() {
+		t.Error("expected non-zero ArchivedAt for foo/bar")
+	}
+
+	// Second module: active
+	if results[1].IsArchived {
+		t.Error("expected baz/qux to be active")
+	}
+	if results[1].PushedAt.IsZero() {
+		t.Error("expected non-zero PushedAt for baz/qux")
+	}
+
+	// Third module: not in status map
+	if results[2].IsArchived {
+		t.Error("expected unknown/repo to not be archived")
+	}
+	if !results[2].PushedAt.IsZero() {
+		t.Error("expected zero PushedAt for unknown/repo")
+	}
+}
+
+func TestGetArchivedPaths(t *testing.T) {
+	results := []RepoStatus{
+		{Module: Module{Path: "github.com/foo/bar"}, IsArchived: true},
+		{Module: Module{Path: "github.com/baz/qux"}, IsArchived: false},
+		{Module: Module{Path: "github.com/old/lib"}, IsArchived: true},
+	}
+
+	paths := getArchivedPaths(results)
+	if len(paths) != 2 {
+		t.Fatalf("expected 2 archived paths, got %d", len(paths))
+	}
+	if paths[0] != "github.com/foo/bar" {
+		t.Errorf("expected github.com/foo/bar, got %s", paths[0])
+	}
+	if paths[1] != "github.com/old/lib" {
+		t.Errorf("expected github.com/old/lib, got %s", paths[1])
+	}
+}
+
+func TestGetArchivedPaths_None(t *testing.T) {
+	results := []RepoStatus{
+		{Module: Module{Path: "github.com/foo/bar"}, IsArchived: false},
+	}
+	paths := getArchivedPaths(results)
+	if len(paths) != 0 {
+		t.Fatalf("expected 0 archived paths, got %d", len(paths))
+	}
+}

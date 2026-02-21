@@ -155,9 +155,8 @@ type JSONSourceFile struct {
 	Import string `json:"import"`
 }
 
-// PrintJSON outputs results as JSON. If fileMatches is non-nil, archived
-// modules will include source_files arrays.
-func PrintJSON(results []RepoStatus, nonGitHubCount int, showAll bool, fileMatches map[string][]FileMatch) {
+// buildJSONOutput creates the JSONOutput data structure without writing it.
+func buildJSONOutput(results []RepoStatus, nonGitHubCount int, showAll bool, fileMatches map[string][]FileMatch) JSONOutput {
 	out := JSONOutput{
 		SkippedNonGH: nonGitHubCount,
 		TotalChecked: len(results),
@@ -201,6 +200,13 @@ func PrintJSON(results []RepoStatus, nonGitHubCount int, showAll bool, fileMatch
 		}
 	}
 
+	return out
+}
+
+// PrintJSON outputs results as JSON. If fileMatches is non-nil, archived
+// modules will include source_files arrays.
+func PrintJSON(results []RepoStatus, nonGitHubCount int, showAll bool, fileMatches map[string][]FileMatch) {
+	out := buildJSONOutput(results, nonGitHubCount, showAll, fileMatches)
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	enc.Encode(out)
@@ -445,8 +451,8 @@ type JSONTreeArchivedDep struct {
 	SourceFiles []JSONSourceFile `json:"source_files,omitempty"`
 }
 
-// PrintTreeJSON outputs the dependency tree as JSON.
-func PrintTreeJSON(results []RepoStatus, graph map[string][]string, allModules []Module, fileMatches map[string][]FileMatch, nonGitHubCount int) {
+// buildTreeJSONOutput creates the JSONTreeOutput data structure without writing it.
+func buildTreeJSONOutput(results []RepoStatus, graph map[string][]string, allModules []Module, fileMatches map[string][]FileMatch, nonGitHubCount int) JSONTreeOutput {
 	entries, ctx := buildTree(results, graph, allModules)
 
 	out := JSONTreeOutput{
@@ -456,10 +462,7 @@ func PrintTreeJSON(results []RepoStatus, graph map[string][]string, allModules [
 	}
 
 	if entries == nil {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		enc.Encode(out)
-		return
+		return out
 	}
 
 	buildSourceFiles := func(modPath string) []JSONSourceFile {
@@ -523,9 +526,39 @@ func PrintTreeJSON(results []RepoStatus, graph map[string][]string, allModules [
 		out.Tree = append(out.Tree, entry)
 	}
 
+	return out
+}
+
+// PrintTreeJSON outputs the dependency tree as JSON.
+func PrintTreeJSON(results []RepoStatus, graph map[string][]string, allModules []Module, fileMatches map[string][]FileMatch, nonGitHubCount int) {
+	out := buildTreeJSONOutput(results, graph, allModules, fileMatches, nonGitHubCount)
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	enc.Encode(out)
+}
+
+// RecursiveJSONOutput wraps per-module results for --recursive --json.
+type RecursiveJSONOutput struct {
+	Modules []RecursiveJSONEntry `json:"modules"`
+}
+
+// RecursiveJSONEntry holds results for a single go.mod in recursive mode.
+type RecursiveJSONEntry struct {
+	GoMod      string `json:"go_mod"`
+	ModulePath string `json:"module_path"`
+	JSONOutput
+}
+
+// RecursiveJSONTreeOutput wraps per-module tree results for --recursive --tree --json.
+type RecursiveJSONTreeOutput struct {
+	Modules []RecursiveJSONTreeEntry `json:"modules"`
+}
+
+// RecursiveJSONTreeEntry holds tree results for a single go.mod in recursive mode.
+type RecursiveJSONTreeEntry struct {
+	GoMod      string `json:"go_mod"`
+	ModulePath string `json:"module_path"`
+	JSONTreeOutput
 }
 
 // allSeen returns true if all items in slice are already in the seen set.

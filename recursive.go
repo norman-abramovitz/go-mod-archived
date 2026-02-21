@@ -1,0 +1,301 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// runConfig holds parsed flag values for runRecursive.
+type runConfig struct {
+	jsonMode   bool
+	showAll    bool
+	directOnly bool
+	workers    int
+	treeMode   bool
+	filesMode  bool
+}
+
+// findGoModFiles walks the directory tree rooted at dir and returns
+// paths to all go.mod files found. It skips vendor/, testdata/, and
+// hidden directories (names starting with ".").
+func findGoModFiles(dir string) ([]string, error) {
+	var paths []string
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if name == "vendor" || name == "testdata" || (strings.HasPrefix(name, ".") && name != ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.Name() == "go.mod" {
+			paths = append(paths, path)
+		}
+		return nil
+	})
+	return paths, err
+}
+
+// applyStatus maps GitHub archive status from a global lookup onto
+// a set of modules from a specific go.mod file.
+func applyStatus(modules []Module, statusMap map[string]RepoStatus) []RepoStatus {
+	results := make([]RepoStatus, len(modules))
+	for i, m := range modules {
+		rs := RepoStatus{Module: m}
+		key := m.Owner + "/" + m.Repo
+		if global, ok := statusMap[key]; ok {
+			rs.IsArchived = global.IsArchived
+			rs.ArchivedAt = global.ArchivedAt
+			rs.PushedAt = global.PushedAt
+			rs.NotFound = global.NotFound
+			rs.Error = global.Error
+		}
+		results[i] = rs
+	}
+	return results
+}
+
+// getArchivedPaths returns module paths for archived results.
+func getArchivedPaths(results []RepoStatus) []string {
+	var paths []string
+	for _, r := range results {
+		if r.IsArchived {
+			paths = append(paths, r.Module.Path)
+		}
+	}
+	return paths
+}
+
+// moduleInfo holds parsed data for a single go.mod file.
+type moduleInfo struct {
+	gomodPath     string
+	relPath       string
+	moduleName    string
+	allModules    []Module
+	githubModules []Module
+	nonGHCount    int
+}
+
+// runRecursive scans a directory tree for go.mod files, queries GitHub
+// once for all unique repos, and outputs per-module results.
+// Returns the exit code (0 = clean, 1 = archived found, 2 = error).
+func runRecursive(rootDir string, cfg runConfig) int {
+	gomodPaths, err := findGoModFiles(rootDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error scanning directory: %v\n", err)
+		return 2
+	}
+	if len(gomodPaths) == 0 {
+		fmt.Fprintf(os.Stderr, "No go.mod files found in %s\n", rootDir)
+		return 2
+	}
+
+	// Parse all go.mod files
+	var modules []moduleInfo
+	var allGitHub []Module
+	globalSeen := make(map[string]bool)
+
+	for _, gp := range gomodPaths {
+		allMods, err := ParseGoMod(gp)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: skipping %s: %v\n", gp, err)
+			continue
+		}
+		modName, _ := ModuleName(gp)
+		ghMods, nonGH := FilterGitHub(allMods, cfg.directOnly)
+
+		rel, _ := filepath.Rel(rootDir, gp)
+		modules = append(modules, moduleInfo{
+			gomodPath:     gp,
+			relPath:       rel,
+			moduleName:    modName,
+			allModules:    allMods,
+			githubModules: ghMods,
+			nonGHCount:    nonGH,
+		})
+
+		// Collect globally unique GitHub modules for one API call
+		for _, m := range ghMods {
+			key := m.Owner + "/" + m.Repo
+			if !globalSeen[key] {
+				globalSeen[key] = true
+				allGitHub = append(allGitHub, m)
+			}
+		}
+	}
+
+	if len(modules) == 0 {
+		fmt.Fprintf(os.Stderr, "No valid go.mod files found.\n")
+		return 2
+	}
+
+	if len(allGitHub) == 0 {
+		fmt.Fprintf(os.Stderr, "No GitHub modules found across %d go.mod files.\n", len(modules))
+		return 0
+	}
+
+	fmt.Fprintf(os.Stderr, "Found %d go.mod files, checking %d unique GitHub repos...\n", len(modules), len(allGitHub))
+
+	// Query GitHub once for all unique repos
+	globalResults, err := CheckRepos(allGitHub, cfg.workers)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 2
+	}
+
+	// Build status map: owner/repo → RepoStatus
+	statusMap := make(map[string]RepoStatus)
+	for _, r := range globalResults {
+		statusMap[r.Module.Owner+"/"+r.Module.Repo] = r
+	}
+
+	hasAnyArchived := false
+
+	if cfg.jsonMode {
+		hasAnyArchived = runRecursiveJSON(modules, statusMap, cfg)
+	} else {
+		hasAnyArchived = runRecursiveText(modules, statusMap, cfg)
+	}
+
+	if hasAnyArchived {
+		return 1
+	}
+	return 0
+}
+
+// runRecursiveJSON outputs recursive results as a single JSON document.
+func runRecursiveJSON(modules []moduleInfo, statusMap map[string]RepoStatus, cfg runConfig) bool {
+	hasAnyArchived := false
+
+	if cfg.treeMode {
+		out := RecursiveJSONTreeOutput{Modules: []RecursiveJSONTreeEntry{}}
+
+		for _, mi := range modules {
+			results := applyStatus(mi.githubModules, statusMap)
+			archivedPaths := getArchivedPaths(results)
+			if len(archivedPaths) > 0 {
+				hasAnyArchived = true
+			}
+
+			var fileMatches map[string][]FileMatch
+			if cfg.filesMode && len(archivedPaths) > 0 {
+				fm, err := ScanImports(filepath.Dir(mi.gomodPath), archivedPaths)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not scan imports for %s: %v\n", mi.relPath, err)
+				} else {
+					fileMatches = fm
+				}
+			}
+
+			graph, err := parseModGraph(filepath.Dir(mi.gomodPath))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not run go mod graph for %s: %v\n", mi.relPath, err)
+				graph = map[string][]string{}
+			}
+
+			treeOut := buildTreeJSONOutput(results, graph, mi.allModules, fileMatches, mi.nonGHCount)
+			out.Modules = append(out.Modules, RecursiveJSONTreeEntry{
+				GoMod:          mi.relPath,
+				ModulePath:     mi.moduleName,
+				JSONTreeOutput: treeOut,
+			})
+		}
+
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(out)
+	} else {
+		out := RecursiveJSONOutput{Modules: []RecursiveJSONEntry{}}
+
+		for _, mi := range modules {
+			results := applyStatus(mi.githubModules, statusMap)
+			archivedPaths := getArchivedPaths(results)
+			if len(archivedPaths) > 0 {
+				hasAnyArchived = true
+			}
+
+			var fileMatches map[string][]FileMatch
+			if cfg.filesMode && len(archivedPaths) > 0 {
+				fm, err := ScanImports(filepath.Dir(mi.gomodPath), archivedPaths)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not scan imports for %s: %v\n", mi.relPath, err)
+				} else {
+					fileMatches = fm
+				}
+			}
+
+			jsonOut := buildJSONOutput(results, mi.nonGHCount, cfg.showAll, fileMatches)
+			out.Modules = append(out.Modules, RecursiveJSONEntry{
+				GoMod:      mi.relPath,
+				ModulePath: mi.moduleName,
+				JSONOutput: jsonOut,
+			})
+		}
+
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(out)
+	}
+
+	return hasAnyArchived
+}
+
+// runRecursiveText outputs recursive results as text with per-module headers.
+func runRecursiveText(modules []moduleInfo, statusMap map[string]RepoStatus, cfg runConfig) bool {
+	hasAnyArchived := false
+
+	for i, mi := range modules {
+		results := applyStatus(mi.githubModules, statusMap)
+		archivedPaths := getArchivedPaths(results)
+		hasArchived := len(archivedPaths) > 0
+		if hasArchived {
+			hasAnyArchived = true
+		}
+
+		if i > 0 {
+			fmt.Fprintln(os.Stderr)
+		}
+		fmt.Fprintf(os.Stderr, "=== %s — %s ===\n", mi.relPath, mi.moduleName)
+
+		if len(mi.githubModules) == 0 {
+			fmt.Fprintf(os.Stderr, "No GitHub modules found.\n")
+			continue
+		}
+
+		var fileMatches map[string][]FileMatch
+		if cfg.filesMode && hasArchived {
+			fm, err := ScanImports(filepath.Dir(mi.gomodPath), archivedPaths)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not scan imports: %v\n", err)
+			} else {
+				fileMatches = fm
+			}
+		}
+
+		if cfg.treeMode && hasArchived {
+			graph, err := parseModGraph(filepath.Dir(mi.gomodPath))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not run go mod graph: %v\n", err)
+			} else {
+				PrintTree(results, graph, mi.allModules, fileMatches)
+				if mi.nonGHCount > 0 {
+					fmt.Fprintf(os.Stderr, "\nSkipped %d non-GitHub modules.\n", mi.nonGHCount)
+				}
+				continue
+			}
+		}
+
+		PrintTable(results, mi.nonGHCount, cfg.showAll)
+		if fileMatches != nil {
+			PrintFiles(results, fileMatches)
+		}
+	}
+
+	return hasAnyArchived
+}
