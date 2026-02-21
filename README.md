@@ -45,6 +45,7 @@ If no path is given, looks for `go.mod` in the current directory. You can also p
 | `--recursive` | Scan all go.mod files in the directory tree |
 | `--time` | Include time in date output (2006-01-02 15:04:05 instead of 2006-01-02) |
 | `--workers N` | Repos per GitHub GraphQL batch request (default 50) |
+| `--version` | Print version information and exit |
 
 ### Exit codes
 
@@ -310,6 +311,10 @@ Deprecation checks all modules (not just GitHub ones), uses each module's exact 
 4. Extracts `owner/repo` from `github.com/*` module paths, deduplicating multi-path repos (e.g., `github.com/foo/bar/v2` and `github.com/foo/bar/sdk/v2`)
 5. Batches repos into GitHub GraphQL queries (~50 per request) checking `isArchived`, `archivedAt`, and `pushedAt`
 6. Non-GitHub modules that couldn't be resolved are skipped with a summary count
+
+## Attribution
+
+This project was built with the assistance of [Claude](https://claude.ai), an AI assistant by [Anthropic](https://www.anthropic.com).
 
 ## License
 

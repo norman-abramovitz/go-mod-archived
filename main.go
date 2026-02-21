@@ -25,11 +25,17 @@ func main() {
 	recursiveFlag := flag.Bool("recursive", false, "Scan all go.mod files in the directory tree")
 	resolveFlag := flag.Bool("resolve", false, "Resolve vanity import paths (e.g. google.golang.org/grpc) to GitHub repos")
 	deprecatedFlag := flag.Bool("deprecated", false, "Check for deprecated modules via the Go module proxy")
+	versionFlag := flag.Bool("version", false, "Print version information and exit")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: modrot [flags] [path/to/go.mod | path/to/dir]\n\nDetect archived GitHub dependencies in a Go project.\n\nFlags:\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	if *versionFlag {
+		printVersion()
+		os.Exit(0)
+	}
 
 	// Set date format
 	if *timeFlag {

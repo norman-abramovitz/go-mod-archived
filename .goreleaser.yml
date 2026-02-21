@@ -1,0 +1,44 @@
+version: 2
+
+builds:
+  - binary: modrot
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.buildDate={{.Date}}
+    goos:
+      - linux
+      - darwin
+      - windows
+      - freebsd
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^chore:"
+
+brews:
+  - repository:
+      owner: norman-abramovitz
+      name: homebrew-tap
+    homepage: https://github.com/norman-abramovitz/modrot
+    description: Detect archived/deprecated dependencies and inactive projects in go.mod files
