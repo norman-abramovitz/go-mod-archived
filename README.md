@@ -41,6 +41,7 @@ If no path is given, looks for `go.mod` in the current directory. You can also p
 | `--tree` | Show dependency tree for archived modules (uses `go mod graph`) |
 | `--files` | Show source files that import archived modules (requires `rg`) |
 | `--resolve` | Resolve vanity import paths to GitHub repos (e.g. `google.golang.org/grpc` → `github.com/grpc/grpc-go`) |
+| `--deprecated` | Check for deprecated modules via the Go module proxy |
 | `--recursive` | Scan all go.mod files in the directory tree |
 | `--time` | Include time in date output (2006-01-02 15:04:05 instead of 2006-01-02) |
 | `--workers N` | Repos per GitHub GraphQL batch request (default 50) |
@@ -256,13 +257,59 @@ Resolution uses two methods in sequence:
 
 Combines with all other flags. In `--recursive` mode, resolution is deduplicated across all go.mod files.
 
+### Checking for deprecated modules
+
+GitHub archival and Go module deprecation are independent signals. Many archived repos were never formally deprecated in their `go.mod`, and some modules like `github.com/golang/protobuf` are formally deprecated but not archived. The `--deprecated` flag checks for `// Deprecated:` comments in go.mod files via the Go module proxy:
+
+```
+$ go-mod-archived --deprecated
+Found 2 deprecated modules.
+Checking 234 GitHub modules...
+
+ARCHIVED DEPENDENCIES (19 of 234 github.com modules)
+
+MODULE                                     VERSION   DIRECT    ARCHIVED AT  LAST PUSHED
+github.com/mitchellh/copystructure         v1.2.0    direct    2024-07-22   2021-05-05
+...
+
+DEPRECATED MODULES (2 modules)
+
+MODULE                                                 VERSION  DIRECT    MESSAGE
+github.com/Azure/azure-sdk-for-go/sdk/keyvault/azkeys  v0.10.0  indirect  use github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys instead
+github.com/golang/protobuf                             v1.5.4   indirect  Use the "google.golang.org/protobuf" module instead.
+
+Skipped 61 non-GitHub modules.
+```
+
+In JSON output, deprecated modules appear in a separate `"deprecated"` array with `deprecated_message` fields:
+
+```
+$ go-mod-archived --deprecated --json
+{
+  "archived": [ ... ],
+  "deprecated": [
+    {
+      "module": "github.com/golang/protobuf",
+      "version": "v1.5.4",
+      "direct": false,
+      "deprecated_message": "Use the \"google.golang.org/protobuf\" module instead."
+    }
+  ],
+  "skipped_non_github": 61,
+  "total_checked": 234
+}
+```
+
+Deprecation checks all modules (not just GitHub ones), uses each module's exact version from go.mod, and respects `--direct-only`. In `--recursive` mode, proxy requests are deduplicated across go.mod files. In `--tree` mode, modules that are both archived and deprecated show `[DEPRECATED]` alongside `[ARCHIVED]`.
+
 ## How it works
 
 1. Parses `go.mod` using `golang.org/x/mod/modfile`
 2. Optionally resolves vanity import paths to GitHub repos via the Go module proxy and HTML meta tags (`--resolve`)
-3. Extracts `owner/repo` from `github.com/*` module paths, deduplicating multi-path repos (e.g., `github.com/foo/bar/v2` and `github.com/foo/bar/sdk/v2`)
-4. Batches repos into GitHub GraphQL queries (~50 per request) checking `isArchived`, `archivedAt`, and `pushedAt`
-5. Non-GitHub modules that couldn't be resolved are skipped with a summary count
+3. Optionally checks for deprecated modules via `proxy.golang.org/{module}/@v/{version}.mod` (`--deprecated`)
+4. Extracts `owner/repo` from `github.com/*` module paths, deduplicating multi-path repos (e.g., `github.com/foo/bar/v2` and `github.com/foo/bar/sdk/v2`)
+5. Batches repos into GitHub GraphQL queries (~50 per request) checking `isArchived`, `archivedAt`, and `pushedAt`
+6. Non-GitHub modules that couldn't be resolved are skipped with a summary count
 
 ## License
 
