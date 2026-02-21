@@ -40,5 +40,6 @@ brews:
   - repository:
       owner: norman-abramovitz
       name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     homepage: https://github.com/norman-abramovitz/modrot
     description: Detect archived/deprecated dependencies and inactive projects in go.mod files

@@ -25,6 +25,7 @@ func main() {
 	recursiveFlag := flag.Bool("recursive", false, "Scan all go.mod files in the directory tree")
 	resolveFlag := flag.Bool("resolve", false, "Resolve vanity import paths (e.g. google.golang.org/grpc) to GitHub repos")
 	deprecatedFlag := flag.Bool("deprecated", false, "Check for deprecated modules via the Go module proxy")
+	goVersionFlag := flag.String("go-version", "", "Override the Go toolchain version from go.mod (e.g. 1.21.0)")
 	versionFlag := flag.Bool("version", false, "Print version information and exit")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: modrot [flags] [path/to/go.mod | path/to/dir]\n\nDetect archived GitHub dependencies in a Go project.\n\nFlags:\n")
@@ -71,6 +72,7 @@ func main() {
 			filesMode:      *filesFlag,
 			resolveMode:    *resolveFlag,
 			deprecatedMode: *deprecatedFlag,
+			goVersion:      *goVersionFlag,
 		}))
 	}
 
@@ -159,7 +161,7 @@ func main() {
 
 	// Handle --tree mode
 	if *treeFlag && hasArchived {
-		graph, err := parseModGraph(filepath.Dir(gomodPath))
+		graph, err := parseModGraph(filepath.Dir(gomodPath), *goVersionFlag)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not run go mod graph: %v\n", err)
 		} else {
@@ -199,6 +201,7 @@ func main() {
 // valueFlagNames lists flags that take a value argument (not boolean).
 var valueFlagNames = map[string]bool{
 	"-workers": true, "--workers": true,
+	"-go-version": true, "--go-version": true,
 }
 
 // reorderArgs moves flags after positional arguments to before them,
@@ -234,9 +237,13 @@ func reorderArgs() {
 
 // parseModGraph runs `go mod graph` in the given directory and returns
 // a map of parent → []child (both as "module@version" strings).
-func parseModGraph(dir string) (map[string][]string, error) {
+// If goVersion is non-empty, GOTOOLCHAIN is set to force that Go version.
+func parseModGraph(dir string, goVersion string) (map[string][]string, error) {
 	cmd := exec.Command("go", "mod", "graph")
 	cmd.Dir = dir
+	if goVersion != "" {
+		cmd.Env = append(os.Environ(), "GOTOOLCHAIN=go"+goVersion)
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err

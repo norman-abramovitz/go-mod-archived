@@ -66,6 +66,16 @@ func TestReorderArgs(t *testing.T) {
 			args: []string{"cmd", "path/go.mod", "--json", "--files", "--tree", "--direct-only", "--all", "--time"},
 			want: []string{"cmd", "--json", "--files", "--tree", "--direct-only", "--all", "--time", "path/go.mod"},
 		},
+		{
+			name: "go-version value flag with separate arg",
+			args: []string{"cmd", "path/go.mod", "--go-version", "1.21.0"},
+			want: []string{"cmd", "--go-version", "1.21.0", "path/go.mod"},
+		},
+		{
+			name: "go-version value flag with equals syntax",
+			args: []string{"cmd", "path/go.mod", "--go-version=1.21.0"},
+			want: []string{"cmd", "--go-version=1.21.0", "path/go.mod"},
+		},
 	}
 
 	for _, tt := range tests {

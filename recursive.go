@@ -18,6 +18,7 @@ type runConfig struct {
 	filesMode      bool
 	resolveMode    bool
 	deprecatedMode bool
+	goVersion      string
 }
 
 // findGoModFiles walks the directory tree rooted at dir and returns
@@ -231,7 +232,7 @@ func runRecursiveJSON(modules []moduleInfo, statusMap map[string]RepoStatus, cfg
 				}
 			}
 
-			graph, err := parseModGraph(filepath.Dir(mi.gomodPath))
+			graph, err := parseModGraph(filepath.Dir(mi.gomodPath), cfg.goVersion)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: could not run go mod graph for %s: %v\n", mi.relPath, err)
 				graph = map[string][]string{}
@@ -321,7 +322,7 @@ func runRecursiveText(modules []moduleInfo, statusMap map[string]RepoStatus, cfg
 		deprecatedModules := getDeprecatedModules(mi.allModules, cfg.directOnly, cfg.deprecatedMode)
 
 		if cfg.treeMode && hasArchived {
-			graph, err := parseModGraph(filepath.Dir(mi.gomodPath))
+			graph, err := parseModGraph(filepath.Dir(mi.gomodPath), cfg.goVersion)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: could not run go mod graph: %v\n", err)
 			} else {

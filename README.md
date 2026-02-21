@@ -6,11 +6,19 @@ Parses your `go.mod`, queries the GitHub GraphQL API in batches, and reports whi
 
 ## Install
 
+### Homebrew
+
+```bash
+brew install norman-abramovitz/tap/modrot
+```
+
+### Go
+
 ```bash
 go install github.com/norman-abramovitz/modrot@latest
 ```
 
-Or build from source:
+### From source
 
 ```bash
 git clone https://github.com/norman-abramovitz/modrot.git
@@ -45,6 +53,7 @@ If no path is given, looks for `go.mod` in the current directory. You can also p
 | `--recursive` | Scan all go.mod files in the directory tree |
 | `--time` | Include time in date output (2006-01-02 15:04:05 instead of 2006-01-02) |
 | `--workers N` | Repos per GitHub GraphQL batch request (default 50) |
+| `--go-version V` | Override the Go toolchain version from go.mod (e.g. `1.21.0`) |
 | `--version` | Print version information and exit |
 
 ### Exit codes
@@ -302,6 +311,40 @@ $ modrot --deprecated --json
 ```
 
 Deprecation checks all modules (not just GitHub ones), uses each module's exact version from go.mod, and respects `--direct-only`. In `--recursive` mode, proxy requests are deduplicated across go.mod files. In `--tree` mode, modules that are both archived and deprecated show `[DEPRECATED]` alongside `[ARCHIVED]`.
+
+## Development
+
+```bash
+go build -o modrot .    # Build the binary
+go test ./...           # Run all tests
+```
+
+Build with version info (matches what GoReleaser does for releases):
+
+```bash
+go build -ldflags "-X main.version=dev -X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o modrot .
+```
+
+## Releasing
+
+Releases are automated via [GoReleaser](https://goreleaser.com/) and GitHub Actions.
+
+To create a release, tag and push:
+
+```bash
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+This triggers a GitHub Actions workflow that:
+
+- Runs tests
+- Builds cross-platform binaries (linux/darwin/windows/freebsd, amd64/arm64)
+- Generates SHA-256 checksums
+- Creates a GitHub release with changelog
+- Updates the Homebrew formula in [norman-abramovitz/homebrew-tap](https://github.com/norman-abramovitz/homebrew-tap)
+
+**Setup note:** The `HOMEBREW_TAP_TOKEN` repository secret must be set to a GitHub PAT with write access to the `homebrew-tap` repo, since `GITHUB_TOKEN` only has access to the current repository.
 
 ## How it works
 
