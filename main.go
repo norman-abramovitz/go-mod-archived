@@ -26,7 +26,7 @@ func main() {
 	resolveFlag := flag.Bool("resolve", false, "Resolve vanity import paths (e.g. google.golang.org/grpc) to GitHub repos")
 	deprecatedFlag := flag.Bool("deprecated", false, "Check for deprecated modules via the Go module proxy")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: go-mod-archived [flags] [path/to/go.mod | path/to/dir]\n\nDetect archived GitHub dependencies in a Go project.\n\nFlags:\n")
+		fmt.Fprintf(os.Stderr, "Usage: modrot [flags] [path/to/go.mod | path/to/dir]\n\nDetect archived GitHub dependencies in a Go project.\n\nFlags:\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -198,11 +198,11 @@ var valueFlagNames = map[string]bool{
 // reorderArgs moves flags after positional arguments to before them,
 // so Go's flag package can parse them. For example:
 //
-//	go-mod-archived path/to/go.mod --files --tree
+//	modrot path/to/go.mod --files --tree
 //
 // becomes:
 //
-//	go-mod-archived --files --tree path/to/go.mod
+//	modrot --files --tree path/to/go.mod
 func reorderArgs() {
 	var flags, positional []string
 	args := os.Args[1:]

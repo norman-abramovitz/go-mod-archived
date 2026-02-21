@@ -1,4 +1,4 @@
-# go-mod-archived
+# modrot
 
 Detect archived GitHub dependencies in Go projects.
 
@@ -7,15 +7,15 @@ Parses your `go.mod`, queries the GitHub GraphQL API in batches, and reports whi
 ## Install
 
 ```bash
-go install github.com/norman-abramovitz/go-mod-archived@latest
+go install github.com/norman-abramovitz/modrot@latest
 ```
 
 Or build from source:
 
 ```bash
-git clone https://github.com/norman-abramovitz/go-mod-archived.git
-cd go-mod-archived
-go build -o go-mod-archived .
+git clone https://github.com/norman-abramovitz/modrot.git
+cd modrot
+go build -o modrot .
 ```
 
 ## Prerequisites
@@ -26,7 +26,7 @@ go build -o go-mod-archived .
 ## Usage
 
 ```
-go-mod-archived [flags] [path/to/go.mod | path/to/dir]
+modrot [flags] [path/to/go.mod | path/to/dir]
 ```
 
 If no path is given, looks for `go.mod` in the current directory. You can also pass a directory path and the tool will look for `go.mod` inside it. Flags can appear before or after the path.
@@ -57,7 +57,7 @@ If no path is given, looks for `go.mod` in the current directory. You can also p
 ### Default table output
 
 ```
-$ go-mod-archived
+$ modrot
 Checking 234 GitHub modules...
 
 ARCHIVED DEPENDENCIES (19 of 234 github.com modules)
@@ -74,7 +74,7 @@ Skipped 61 non-GitHub modules.
 ### Direct dependencies only
 
 ```
-$ go-mod-archived --direct-only
+$ modrot --direct-only
 Checking 83 GitHub modules...
 
 ARCHIVED DEPENDENCIES (5 of 83 github.com modules)
@@ -92,7 +92,7 @@ github.com/mitchellh/reflectwalk           v1.0.2    direct  2024-07-22   2022-0
 Shows which direct dependencies transitively pull in archived modules:
 
 ```
-$ go-mod-archived --tree
+$ modrot --tree
 github.com/Masterminds/sprig/v3
   ├── github.com/mitchellh/copystructure [ARCHIVED]
   └── github.com/mitchellh/reflectwalk [ARCHIVED]
@@ -111,7 +111,7 @@ github.com/mitchellh/copystructure [ARCHIVED]
 Shows which source files import each archived module, helping prioritize replacements:
 
 ```
-$ go-mod-archived --files
+$ modrot --files
 ...
 SOURCE FILES IMPORTING ARCHIVED MODULES
 
@@ -132,7 +132,7 @@ github.com/pkg/errors (0 files)
 Combines with `--json` to add `source_files` arrays, or with `--tree` to append file counts:
 
 ```
-$ go-mod-archived --files --tree
+$ modrot --files --tree
 github.com/Masterminds/sprig/v3@v3.2.3
   ├── github.com/mitchellh/copystructure@v1.2.0 [ARCHIVED 2024-07-22] (10 files)
   └── github.com/mitchellh/reflectwalk@v1.0.2 [ARCHIVED 2024-07-22] (1 file)
@@ -141,7 +141,7 @@ github.com/Masterminds/sprig/v3@v3.2.3
 ### JSON output
 
 ```
-$ go-mod-archived --json
+$ modrot --json
 {
   "archived": [
     {
@@ -164,7 +164,7 @@ $ go-mod-archived --json
 Combine `--tree --json` for a structured tree showing which direct dependencies pull in archived transitive deps:
 
 ```
-$ go-mod-archived --tree --json
+$ modrot --tree --json
 {
   "tree": [
     {
@@ -207,7 +207,7 @@ Add `--files` to include `source_files` arrays on archived entries.
 For multi-module repos, `--recursive` discovers all `go.mod` files in the directory tree, queries GitHub once for all unique repos, and outputs per-module results:
 
 ```
-$ go-mod-archived --recursive --direct-only /path/to/project
+$ modrot --recursive --direct-only /path/to/project
 Found 10 go.mod files, checking 90 unique GitHub repos...
 === api/go.mod — github.com/myorg/myapp/api/v2 ===
 
@@ -235,7 +235,7 @@ Skips `vendor/`, `testdata/`, and hidden directories. Combines with all other fl
 By default, only `github.com/*` modules are checked. Many Go modules use vanity import paths (`google.golang.org/grpc`, `k8s.io/api`, `gopkg.in/yaml.v3`, `go.uber.org/zap`, etc.) that are actually hosted on GitHub. The `--resolve` flag resolves these to their real GitHub repos so they can be checked too:
 
 ```
-$ go-mod-archived --resolve
+$ modrot --resolve
 Resolved 50 non-GitHub modules to GitHub repos.
 Checking 265 GitHub modules...
 
@@ -262,7 +262,7 @@ Combines with all other flags. In `--recursive` mode, resolution is deduplicated
 GitHub archival and Go module deprecation are independent signals. Many archived repos were never formally deprecated in their `go.mod`, and some modules like `github.com/golang/protobuf` are formally deprecated but not archived. The `--deprecated` flag checks for `// Deprecated:` comments in go.mod files via the Go module proxy:
 
 ```
-$ go-mod-archived --deprecated
+$ modrot --deprecated
 Found 2 deprecated modules.
 Checking 234 GitHub modules...
 
@@ -284,7 +284,7 @@ Skipped 61 non-GitHub modules.
 In JSON output, deprecated modules appear in a separate `"deprecated"` array with `deprecated_message` fields:
 
 ```
-$ go-mod-archived --deprecated --json
+$ modrot --deprecated --json
 {
   "archived": [ ... ],
   "deprecated": [

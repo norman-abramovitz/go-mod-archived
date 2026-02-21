@@ -1,5 +1,5 @@
-module github.com/normank/go-mod-archived
+module github.com/normank/modrot
 
 go 1.25.0
 
-require golang.org/x/mod v0.33.0 // indirect
+require golang.org/x/mod v0.33.0
