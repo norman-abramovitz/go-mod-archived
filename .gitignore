@@ -1,3 +1,4 @@
 modrot
 dist/
 *.swp
+coverage.out
