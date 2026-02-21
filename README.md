@@ -40,6 +40,7 @@ If no path is given, looks for `go.mod` in the current directory. You can also p
 | `--direct-only` | Only check direct dependencies (skip indirect) |
 | `--tree` | Show dependency tree for archived modules (uses `go mod graph`) |
 | `--files` | Show source files that import archived modules (requires `rg`) |
+| `--resolve` | Resolve vanity import paths to GitHub repos (e.g. `google.golang.org/grpc` → `github.com/grpc/grpc-go`) |
 | `--recursive` | Scan all go.mod files in the directory tree |
 | `--time` | Include time in date output (2006-01-02 15:04:05 instead of 2006-01-02) |
 | `--workers N` | Repos per GitHub GraphQL batch request (default 50) |
@@ -228,12 +229,40 @@ ARCHIVED DEPENDENCIES (3 of 34 github.com modules)
 
 Skips `vendor/`, `testdata/`, and hidden directories. Combines with all other flags (`--json`, `--tree`, `--files`, etc.).
 
+### Resolving vanity imports
+
+By default, only `github.com/*` modules are checked. Many Go modules use vanity import paths (`google.golang.org/grpc`, `k8s.io/api`, `gopkg.in/yaml.v3`, `go.uber.org/zap`, etc.) that are actually hosted on GitHub. The `--resolve` flag resolves these to their real GitHub repos so they can be checked too:
+
+```
+$ go-mod-archived --resolve
+Resolved 50 non-GitHub modules to GitHub repos.
+Checking 265 GitHub modules...
+
+ARCHIVED DEPENDENCIES (20 of 265 github.com modules)
+
+MODULE                                     VERSION   DIRECT    ARCHIVED AT  LAST PUSHED
+github.com/mitchellh/copystructure         v1.2.0    direct    2024-07-22   2021-05-05
+gopkg.in/yaml.v2                           v2.4.0    indirect  2025-04-01   2025-04-01
+...
+
+Skipped 11 non-GitHub modules.
+```
+
+Without `--resolve`, the same project shows 215 GitHub modules checked and 61 skipped. With it, 50 of those 61 resolve to GitHub repos, leaving only 11 truly non-GitHub modules (mostly `golang.org/x/*` which lives on Google's own infrastructure).
+
+Resolution uses two methods in sequence:
+1. **Go module proxy** (`proxy.golang.org`) — fast, structured JSON with the repo's VCS URL
+2. **HTML meta tags** — fallback for modules like `gopkg.in/*` where the proxy lacks origin info; parses `go-import` and `go-source` meta tags
+
+Combines with all other flags. In `--recursive` mode, resolution is deduplicated across all go.mod files.
+
 ## How it works
 
 1. Parses `go.mod` using `golang.org/x/mod/modfile`
-2. Extracts `owner/repo` from `github.com/*` module paths, deduplicating multi-path repos (e.g., `github.com/foo/bar/v2` and `github.com/foo/bar/sdk/v2`)
-3. Batches repos into GitHub GraphQL queries (~50 per request) checking `isArchived`, `archivedAt`, and `pushedAt`
-4. Non-GitHub modules (`golang.org/x/*`, `google.golang.org/*`, `gopkg.in/*`, etc.) are skipped with a summary count
+2. Optionally resolves vanity import paths to GitHub repos via the Go module proxy and HTML meta tags (`--resolve`)
+3. Extracts `owner/repo` from `github.com/*` module paths, deduplicating multi-path repos (e.g., `github.com/foo/bar/v2` and `github.com/foo/bar/sdk/v2`)
+4. Batches repos into GitHub GraphQL queries (~50 per request) checking `isArchived`, `archivedAt`, and `pushedAt`
+5. Non-GitHub modules that couldn't be resolved are skipped with a summary count
 
 ## License
 
