@@ -23,11 +23,12 @@ type versionInfo struct {
 //   - /@latest → LatestVersion and SourceURL
 //   - /@v/{version}.info → VersionTime
 func EnrichNonGitHub(modules []Module, maxWorkers int) {
-	r := &resolver{
-		client:       &http.Client{Timeout: 10 * time.Second},
-		proxyBaseURL: "https://proxy.golang.org",
-	}
+	enrichNonGitHubWithResolver(modules, maxWorkers, newResolver())
+}
 
+// enrichNonGitHubWithResolver is the internal implementation that accepts
+// a resolver, allowing tests to inject mock HTTP servers.
+func enrichNonGitHubWithResolver(modules []Module, maxWorkers int, r *resolver) {
 	// Collect indices of non-GitHub modules.
 	var indices []int
 	for i := range modules {
@@ -78,11 +79,12 @@ func EnrichNonGitHub(modules []Module, maxWorkers int) {
 // enrichAcrossModules enriches non-GitHub modules across multiple moduleInfo
 // entries (for --recursive), deduplicating by module path+version.
 func enrichAcrossModules(modules []moduleInfo) {
-	r := &resolver{
-		client:       &http.Client{Timeout: 10 * time.Second},
-		proxyBaseURL: "https://proxy.golang.org",
-	}
+	enrichAcrossModulesWithResolver(modules, newResolver())
+}
 
+// enrichAcrossModulesWithResolver is the internal implementation that accepts
+// a resolver, allowing tests to inject mock HTTP servers.
+func enrichAcrossModulesWithResolver(modules []moduleInfo, r *resolver) {
 	type location struct {
 		miIdx  int
 		modIdx int

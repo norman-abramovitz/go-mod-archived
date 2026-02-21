@@ -1386,6 +1386,156 @@ func TestPrintSkippedTable_Enriched(t *testing.T) {
 	}
 }
 
+func TestPrintDeprecatedTable(t *testing.T) {
+	modules := []Module{
+		{Path: "github.com/old/thing", Version: "v0.5.0", Direct: true, Deprecated: "Use github.com/new/thing."},
+		{Path: "github.com/ancient/lib", Version: "v1.0.0", Direct: false, Deprecated: "No longer maintained."},
+	}
+
+	output := captureStdout(t, func() {
+		PrintDeprecatedTable(modules)
+	})
+
+	// Check header
+	if !strings.Contains(output, "MODULE") {
+		t.Error("table should contain MODULE header")
+	}
+	if !strings.Contains(output, "VERSION") {
+		t.Error("table should contain VERSION header")
+	}
+	if !strings.Contains(output, "DIRECT") {
+		t.Error("table should contain DIRECT header")
+	}
+	if !strings.Contains(output, "MESSAGE") {
+		t.Error("table should contain MESSAGE header")
+	}
+
+	// Check sorted output (ancient/lib before old/thing)
+	ancientIdx := strings.Index(output, "github.com/ancient/lib")
+	oldIdx := strings.Index(output, "github.com/old/thing")
+	if ancientIdx < 0 || oldIdx < 0 {
+		t.Error("both modules should appear in output")
+	}
+	if ancientIdx > oldIdx {
+		t.Error("modules should be sorted alphabetically")
+	}
+
+	// Check direct/indirect labels
+	if !strings.Contains(output, "direct") {
+		t.Error("should show 'direct'")
+	}
+	if !strings.Contains(output, "indirect") {
+		t.Error("should show 'indirect'")
+	}
+
+	// Check deprecation messages
+	if !strings.Contains(output, "Use github.com/new/thing.") {
+		t.Error("should show deprecation message")
+	}
+	if !strings.Contains(output, "No longer maintained.") {
+		t.Error("should show deprecation message")
+	}
+}
+
+func TestPrintTable_WithDeprecatedSection(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/foo/bar", Version: "v1.0.0", Direct: true, Owner: "foo", Repo: "bar"},
+			IsArchived: true,
+			ArchivedAt: time.Date(2024, 7, 22, 0, 0, 0, 0, time.UTC),
+			PushedAt:   time.Date(2021, 5, 5, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	deprecatedModules := []Module{
+		{Path: "github.com/old/thing", Version: "v0.5.0", Direct: true, Deprecated: "Use github.com/new/thing."},
+	}
+
+	output := captureStdout(t, func() {
+		PrintTable(results, nil, false, deprecatedModules)
+	})
+
+	// Should contain both archived and deprecated sections
+	if !strings.Contains(output, "github.com/foo/bar") {
+		t.Error("should show archived module")
+	}
+	if !strings.Contains(output, "github.com/old/thing") {
+		t.Error("should show deprecated module")
+	}
+	if !strings.Contains(output, "Use github.com/new/thing.") {
+		t.Error("should show deprecation message")
+	}
+}
+
+func TestBuildTreeJSONOutput_WithDeprecated(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/x/y", Version: "v0.1.0", Owner: "x", Repo: "y"},
+			IsArchived: true,
+			ArchivedAt: time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	allModules := []Module{
+		{Path: "github.com/a/b", Version: "v1.0.0", Owner: "a", Repo: "b", Direct: true},
+		{Path: "github.com/x/y", Version: "v0.1.0", Owner: "x", Repo: "y", Direct: false},
+	}
+
+	graph := map[string][]string{
+		"mymodule":               {"github.com/a/b@v1.0.0"},
+		"github.com/a/b@v1.0.0": {"github.com/x/y@v0.1.0"},
+	}
+
+	deprecatedModules := []Module{
+		{Path: "github.com/old/thing", Version: "v0.5.0", Direct: true, Owner: "old", Repo: "thing", Deprecated: "Use github.com/new/thing."},
+	}
+
+	out := buildTreeJSONOutput(results, graph, allModules, nil, nil, deprecatedModules)
+
+	if len(out.Deprecated) != 1 {
+		t.Fatalf("expected 1 deprecated entry, got %d", len(out.Deprecated))
+	}
+	if out.Deprecated[0].Module != "github.com/old/thing" {
+		t.Errorf("deprecated module = %q", out.Deprecated[0].Module)
+	}
+	if out.Deprecated[0].DeprecatedMessage != "Use github.com/new/thing." {
+		t.Errorf("deprecated message = %q", out.Deprecated[0].DeprecatedMessage)
+	}
+}
+
+func TestPrintJSON_WithDeprecated(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/foo/bar", Version: "v1.0.0", Direct: true, Owner: "foo", Repo: "bar"},
+			IsArchived: true,
+			ArchivedAt: time.Date(2024, 7, 22, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	deprecatedModules := []Module{
+		{Path: "github.com/old/thing", Version: "v0.5.0", Direct: true, Owner: "old", Repo: "thing", Deprecated: "Use github.com/new/thing."},
+	}
+
+	output := captureStdout(t, func() {
+		PrintJSON(results, nil, false, nil, deprecatedModules)
+	})
+
+	var out JSONOutput
+	if err := json.Unmarshal([]byte(output), &out); err != nil {
+		t.Fatalf("invalid JSON: %v\noutput: %s", err, output)
+	}
+
+	if len(out.Deprecated) != 1 {
+		t.Fatalf("expected 1 deprecated, got %d", len(out.Deprecated))
+	}
+	if out.Deprecated[0].Module != "github.com/old/thing" {
+		t.Errorf("deprecated module = %q", out.Deprecated[0].Module)
+	}
+	if out.Deprecated[0].DeprecatedMessage != "Use github.com/new/thing." {
+		t.Errorf("deprecated message = %q", out.Deprecated[0].DeprecatedMessage)
+	}
+}
+
 func TestPrintJSON_NonGitHubModules(t *testing.T) {
 	results := []RepoStatus{
 		{

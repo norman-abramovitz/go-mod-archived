@@ -370,3 +370,114 @@ func TestResolveVanityImports(t *testing.T) {
 		t.Errorf("foo/bar: got (%q, %q), want (foo, bar)", modules[0].Owner, modules[0].Repo)
 	}
 }
+
+func TestResolveVanityImports_WorkerPool(t *testing.T) {
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/google.golang.org/grpc/@latest":
+			fmt.Fprint(w, `{"Version":"v1.60.0","Origin":{"VCS":"git","URL":"https://github.com/grpc/grpc-go"}}`)
+		case "/go.uber.org/zap/@latest":
+			fmt.Fprint(w, `{"Version":"v1.27.0","Origin":{"VCS":"git","URL":"https://github.com/uber-go/zap"}}`)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer proxy.Close()
+
+	modules := []Module{
+		{Path: "github.com/foo/bar", Version: "v1.0.0", Owner: "foo", Repo: "bar"},
+		{Path: "google.golang.org/grpc", Version: "v1.60.0"},
+		{Path: "go.uber.org/zap", Version: "v1.27.0"},
+		{Path: "nonexistent.example.com/mod", Version: "v0.0.1"},
+	}
+
+	r := &resolver{client: proxy.Client(), proxyBaseURL: proxy.URL}
+	resolved := resolveVanityImportsWithResolver(modules, 4, r)
+
+	if resolved != 2 {
+		t.Errorf("resolved = %d, want 2", resolved)
+	}
+	if modules[1].Owner != "grpc" || modules[1].Repo != "grpc-go" {
+		t.Errorf("grpc: got (%q, %q), want (grpc, grpc-go)", modules[1].Owner, modules[1].Repo)
+	}
+	if modules[2].Owner != "uber-go" || modules[2].Repo != "zap" {
+		t.Errorf("zap: got (%q, %q), want (uber-go, zap)", modules[2].Owner, modules[2].Repo)
+	}
+	if modules[3].Owner != "" {
+		t.Errorf("nonexistent should not resolve, got owner %q", modules[3].Owner)
+	}
+}
+
+func TestResolveVanityImports_WorkerPool_AllGitHub(t *testing.T) {
+	modules := []Module{
+		{Path: "github.com/foo/bar", Version: "v1.0.0", Owner: "foo", Repo: "bar"},
+	}
+
+	r := &resolver{client: http.DefaultClient, proxyBaseURL: "http://unused"}
+	resolved := resolveVanityImportsWithResolver(modules, 4, r)
+
+	if resolved != 0 {
+		t.Errorf("resolved = %d, want 0 when all modules are GitHub", resolved)
+	}
+}
+
+func TestResolveAcrossModules_WorkerPool(t *testing.T) {
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/google.golang.org/grpc/@latest":
+			fmt.Fprint(w, `{"Version":"v1.60.0","Origin":{"VCS":"git","URL":"https://github.com/grpc/grpc-go"}}`)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer proxy.Close()
+
+	modules := []moduleInfo{
+		{
+			allModules: []Module{
+				{Path: "github.com/foo/bar", Version: "v1.0.0", Owner: "foo", Repo: "bar"},
+				{Path: "google.golang.org/grpc", Version: "v1.60.0"},
+			},
+		},
+		{
+			allModules: []Module{
+				{Path: "google.golang.org/grpc", Version: "v1.60.0"}, // duplicate
+				{Path: "nonexistent.example.com/mod", Version: "v0.0.1"},
+			},
+		},
+	}
+
+	r := &resolver{client: proxy.Client(), proxyBaseURL: proxy.URL}
+	resolved := resolveAcrossModulesWithResolver(modules, r)
+
+	if resolved != 1 {
+		t.Errorf("resolved = %d, want 1 (grpc deduplicated)", resolved)
+	}
+	// Both instances of grpc should be resolved.
+	if modules[0].allModules[1].Owner != "grpc" {
+		t.Errorf("modules[0] grpc: owner = %q, want grpc", modules[0].allModules[1].Owner)
+	}
+	if modules[1].allModules[0].Owner != "grpc" {
+		t.Errorf("modules[1] grpc: owner = %q, want grpc", modules[1].allModules[0].Owner)
+	}
+	if modules[1].allModules[1].Owner != "" {
+		t.Errorf("nonexistent should not resolve, got owner %q", modules[1].allModules[1].Owner)
+	}
+}
+
+func TestResolveAcrossModules_WorkerPool_Empty(t *testing.T) {
+	modules := []moduleInfo{
+		{
+			allModules: []Module{
+				{Path: "github.com/foo/bar", Version: "v1.0.0", Owner: "foo", Repo: "bar"},
+			},
+		},
+	}
+
+	r := &resolver{client: http.DefaultClient, proxyBaseURL: "http://unused"}
+	resolved := resolveAcrossModulesWithResolver(modules, r)
+
+	if resolved != 0 {
+		t.Errorf("resolved = %d, want 0 when no non-GitHub modules", resolved)
+	}
+}

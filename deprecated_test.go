@@ -241,3 +241,101 @@ func TestCheckDeprecations(t *testing.T) {
 		t.Errorf("missing/mod should not be deprecated, got %q", modules[3].Deprecated)
 	}
 }
+
+func TestCheckDeprecations_WorkerPool(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/github.com/golang/protobuf/@v/v1.5.4.mod":
+			fmt.Fprint(w, "// Deprecated: Use google.golang.org/protobuf instead.\nmodule github.com/golang/protobuf\n\ngo 1.17\n")
+		case "/github.com/foo/bar/@v/v1.0.0.mod":
+			fmt.Fprint(w, "module github.com/foo/bar\n\ngo 1.21\n")
+		case "/github.com/old/thing/@v/v0.5.0.mod":
+			fmt.Fprint(w, "module github.com/old/thing // Deprecated: Use github.com/new/thing.\n\ngo 1.20\n")
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+
+	modules := []Module{
+		{Path: "github.com/golang/protobuf", Version: "v1.5.4"},
+		{Path: "github.com/foo/bar", Version: "v1.0.0"},
+		{Path: "github.com/old/thing", Version: "v0.5.0"},
+		{Path: "github.com/missing/mod", Version: "v0.0.1"},
+	}
+
+	r := &resolver{client: srv.Client(), proxyBaseURL: srv.URL}
+	count := checkDeprecationsWithResolver(modules, 4, r)
+
+	if count != 2 {
+		t.Errorf("count = %d, want 2", count)
+	}
+	if modules[0].Deprecated != "Use google.golang.org/protobuf instead." {
+		t.Errorf("protobuf deprecated = %q", modules[0].Deprecated)
+	}
+	if modules[1].Deprecated != "" {
+		t.Errorf("foo/bar should not be deprecated, got %q", modules[1].Deprecated)
+	}
+	if modules[2].Deprecated != "Use github.com/new/thing." {
+		t.Errorf("old/thing deprecated = %q", modules[2].Deprecated)
+	}
+	if modules[3].Deprecated != "" {
+		t.Errorf("missing/mod should not be deprecated, got %q", modules[3].Deprecated)
+	}
+}
+
+func TestCheckDeprecationsAcrossModules_WorkerPool(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/github.com/golang/protobuf/@v/v1.5.4.mod":
+			fmt.Fprint(w, "// Deprecated: Use google.golang.org/protobuf instead.\nmodule github.com/golang/protobuf\n\ngo 1.17\n")
+		case "/github.com/foo/bar/@v/v1.0.0.mod":
+			fmt.Fprint(w, "module github.com/foo/bar\n\ngo 1.21\n")
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+
+	modules := []moduleInfo{
+		{
+			allModules: []Module{
+				{Path: "github.com/golang/protobuf", Version: "v1.5.4"},
+				{Path: "github.com/foo/bar", Version: "v1.0.0"},
+			},
+		},
+		{
+			allModules: []Module{
+				{Path: "github.com/golang/protobuf", Version: "v1.5.4"}, // duplicate
+			},
+		},
+	}
+
+	r := &resolver{client: srv.Client(), proxyBaseURL: srv.URL}
+	count := checkDeprecationsAcrossModulesWithResolver(modules, r)
+
+	if count != 1 {
+		t.Errorf("count = %d, want 1 (protobuf deduplicated)", count)
+	}
+	// Both instances should be marked deprecated.
+	if modules[0].allModules[0].Deprecated != "Use google.golang.org/protobuf instead." {
+		t.Errorf("modules[0] protobuf deprecated = %q", modules[0].allModules[0].Deprecated)
+	}
+	if modules[1].allModules[0].Deprecated != "Use google.golang.org/protobuf instead." {
+		t.Errorf("modules[1] protobuf deprecated = %q", modules[1].allModules[0].Deprecated)
+	}
+	if modules[0].allModules[1].Deprecated != "" {
+		t.Errorf("foo/bar should not be deprecated, got %q", modules[0].allModules[1].Deprecated)
+	}
+}
+
+func TestCheckDeprecationsAcrossModules_WorkerPool_Empty(t *testing.T) {
+	modules := []moduleInfo{}
+
+	r := &resolver{client: http.DefaultClient, proxyBaseURL: "http://unused"}
+	count := checkDeprecationsAcrossModulesWithResolver(modules, r)
+
+	if count != 0 {
+		t.Errorf("count = %d, want 0 for empty modules", count)
+	}
+}

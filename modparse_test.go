@@ -234,6 +234,45 @@ func TestGoModInfo_FileNotFound(t *testing.T) {
 	}
 }
 
+func TestModuleName_MissingModuleDirective(t *testing.T) {
+	// go.mod with no module directive — just a go directive and requires
+	gomod := `go 1.21
+
+require github.com/foo/bar v1.0.0
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "go.mod")
+	os.WriteFile(path, []byte(gomod), 0644)
+
+	_, err := ModuleName(path)
+	if err == nil {
+		t.Error("expected error for go.mod missing module directive")
+	}
+}
+
+func TestGoModInfo_MissingModuleDirective(t *testing.T) {
+	// go.mod with go directive but no module directive
+	gomod := `go 1.21
+
+require github.com/foo/bar v1.0.0
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "go.mod")
+	os.WriteFile(path, []byte(gomod), 0644)
+
+	name, goVer, err := GoModInfo(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Module should be empty when directive is missing.
+	if name != "" {
+		t.Errorf("moduleName = %q, want empty", name)
+	}
+	if goVer != "1.21" {
+		t.Errorf("goVersion = %q, want 1.21", goVer)
+	}
+}
+
 func TestFilterGitHub_DeduplicatesMultiPathRepos(t *testing.T) {
 	modules := []Module{
 		{Path: "github.com/openbao/openbao/api/v2", Version: "v2.0.0", Direct: true, Owner: "openbao", Repo: "openbao"},

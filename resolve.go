@@ -35,14 +35,23 @@ var metaRe = regexp.MustCompile(`(?i)<meta\s+([^>]*)>`)
 // attrRe extracts name="..." and content="..." from a meta tag's attributes.
 var attrRe = regexp.MustCompile(`(?i)(name|content)\s*=\s*"([^"]*)"`)
 
-// ResolveVanityImports resolves non-GitHub modules to GitHub repos.
-// It updates Owner/Repo in-place on each Module. Returns the count resolved.
-func ResolveVanityImports(modules []Module, maxWorkers int) int {
-	r := &resolver{
+// newResolver creates a resolver with production defaults.
+func newResolver() *resolver {
+	return &resolver{
 		client:       &http.Client{Timeout: 10 * time.Second},
 		proxyBaseURL: "https://proxy.golang.org",
 	}
+}
 
+// ResolveVanityImports resolves non-GitHub modules to GitHub repos.
+// It updates Owner/Repo in-place on each Module. Returns the count resolved.
+func ResolveVanityImports(modules []Module, maxWorkers int) int {
+	return resolveVanityImportsWithResolver(modules, maxWorkers, newResolver())
+}
+
+// resolveVanityImportsWithResolver is the internal implementation that accepts
+// a resolver, allowing tests to inject mock HTTP servers.
+func resolveVanityImportsWithResolver(modules []Module, maxWorkers int, r *resolver) int {
 	// Collect indices of non-GitHub modules.
 	var indices []int
 	for i := range modules {
@@ -254,11 +263,12 @@ func parseMetaTags(body string) (goImport, goSource string) {
 // moduleInfo entries (for --recursive), deduplicating by module path.
 // It updates Owner/Repo in-place on each Module. Returns the total count resolved.
 func resolveAcrossModules(modules []moduleInfo) int {
-	r := &resolver{
-		client:       &http.Client{Timeout: 10 * time.Second},
-		proxyBaseURL: "https://proxy.golang.org",
-	}
+	return resolveAcrossModulesWithResolver(modules, newResolver())
+}
 
+// resolveAcrossModulesWithResolver is the internal implementation that accepts
+// a resolver, allowing tests to inject mock HTTP servers.
+func resolveAcrossModulesWithResolver(modules []moduleInfo, r *resolver) int {
 	// Collect unique non-GitHub module paths and their locations.
 	type location struct {
 		miIdx  int // index into modules slice

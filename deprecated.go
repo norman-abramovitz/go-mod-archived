@@ -17,11 +17,12 @@ import (
 // and populates Module.Deprecated with the deprecation message if present.
 // Returns count of deprecated modules found.
 func CheckDeprecations(modules []Module, maxWorkers int) int {
-	r := &resolver{
-		client:       &http.Client{Timeout: 10 * time.Second},
-		proxyBaseURL: "https://proxy.golang.org",
-	}
+	return checkDeprecationsWithResolver(modules, maxWorkers, newResolver())
+}
 
+// checkDeprecationsWithResolver is the internal implementation that accepts
+// a resolver, allowing tests to inject mock HTTP servers.
+func checkDeprecationsWithResolver(modules []Module, maxWorkers int, r *resolver) int {
 	type result struct {
 		idx     int
 		message string
@@ -59,11 +60,12 @@ func CheckDeprecations(modules []Module, maxWorkers int) int {
 // checkDeprecationsAcrossModules checks deprecation across multiple
 // moduleInfo entries (for --recursive), deduplicating by path+version.
 func checkDeprecationsAcrossModules(modules []moduleInfo) int {
-	r := &resolver{
-		client:       &http.Client{Timeout: 10 * time.Second},
-		proxyBaseURL: "https://proxy.golang.org",
-	}
+	return checkDeprecationsAcrossModulesWithResolver(modules, newResolver())
+}
 
+// checkDeprecationsAcrossModulesWithResolver is the internal implementation that accepts
+// a resolver, allowing tests to inject mock HTTP servers.
+func checkDeprecationsAcrossModulesWithResolver(modules []moduleInfo, r *resolver) int {
 	// Collect unique module path+version and their locations.
 	type location struct {
 		miIdx  int // index into modules slice

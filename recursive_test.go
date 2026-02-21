@@ -149,3 +149,59 @@ func TestGetArchivedPaths_None(t *testing.T) {
 		t.Fatalf("expected 0 archived paths, got %d", len(paths))
 	}
 }
+
+func TestGetDeprecatedModules_Disabled(t *testing.T) {
+	modules := []Module{
+		{Path: "github.com/foo/bar", Version: "v1.0.0", Direct: true, Deprecated: "Use something else."},
+	}
+	result := getDeprecatedModules(modules, false, false)
+	if result != nil {
+		t.Errorf("expected nil when deprecatedMode=false, got %v", result)
+	}
+}
+
+func TestGetDeprecatedModules_FilterDeprecated(t *testing.T) {
+	modules := []Module{
+		{Path: "github.com/foo/bar", Version: "v1.0.0", Direct: true, Deprecated: "Use something else."},
+		{Path: "github.com/baz/qux", Version: "v2.0.0", Direct: true},
+		{Path: "github.com/old/lib", Version: "v0.5.0", Direct: false, Deprecated: "Moved to github.com/new/lib."},
+	}
+
+	result := getDeprecatedModules(modules, false, true)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 deprecated modules, got %d", len(result))
+	}
+	if result[0].Path != "github.com/foo/bar" {
+		t.Errorf("result[0].Path = %q, want github.com/foo/bar", result[0].Path)
+	}
+	if result[1].Path != "github.com/old/lib" {
+		t.Errorf("result[1].Path = %q, want github.com/old/lib", result[1].Path)
+	}
+}
+
+func TestGetDeprecatedModules_DirectOnly(t *testing.T) {
+	modules := []Module{
+		{Path: "github.com/foo/bar", Version: "v1.0.0", Direct: true, Deprecated: "Use something else."},
+		{Path: "github.com/old/lib", Version: "v0.5.0", Direct: false, Deprecated: "Moved to github.com/new/lib."},
+	}
+
+	result := getDeprecatedModules(modules, true, true)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 deprecated direct module, got %d", len(result))
+	}
+	if result[0].Path != "github.com/foo/bar" {
+		t.Errorf("result[0].Path = %q, want github.com/foo/bar", result[0].Path)
+	}
+}
+
+func TestGetDeprecatedModules_NoneDeprecated(t *testing.T) {
+	modules := []Module{
+		{Path: "github.com/foo/bar", Version: "v1.0.0", Direct: true},
+		{Path: "github.com/baz/qux", Version: "v2.0.0", Direct: false},
+	}
+
+	result := getDeprecatedModules(modules, false, true)
+	if len(result) != 0 {
+		t.Errorf("expected 0 deprecated modules, got %d", len(result))
+	}
+}

@@ -235,6 +235,120 @@ func TestEnrichNonGitHub_ProxyError(t *testing.T) {
 	}
 }
 
+func TestEnrichNonGitHub_WorkerPool(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/golang.org/x/mod/@latest":
+			fmt.Fprint(w, `{"Version":"v0.22.0","Origin":{"VCS":"git","URL":"https://go.googlesource.com/mod"}}`)
+		case "/golang.org/x/mod/@v/v0.17.0.info":
+			fmt.Fprint(w, `{"Version":"v0.17.0","Time":"2024-03-15T10:30:00Z"}`)
+		case "/golang.org/x/text/@latest":
+			fmt.Fprint(w, `{"Version":"v0.21.0","Origin":{"VCS":"git","URL":"https://go.googlesource.com/text"}}`)
+		case "/golang.org/x/text/@v/v0.14.0.info":
+			fmt.Fprint(w, `{"Version":"v0.14.0","Time":"2023-10-11T17:42:28Z"}`)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+
+	modules := []Module{
+		{Path: "github.com/foo/bar", Version: "v1.0.0", Owner: "foo", Repo: "bar"},
+		{Path: "golang.org/x/mod", Version: "v0.17.0"},
+		{Path: "golang.org/x/text", Version: "v0.14.0"},
+	}
+
+	r := &resolver{client: srv.Client(), proxyBaseURL: srv.URL}
+	enrichNonGitHubWithResolver(modules, 4, r)
+
+	// GitHub module should be untouched.
+	if modules[0].LatestVersion != "" || modules[0].SourceURL != "" {
+		t.Errorf("GitHub module should not be enriched")
+	}
+	// golang.org/x/mod
+	if modules[1].LatestVersion != "v0.22.0" {
+		t.Errorf("mod latest = %q, want v0.22.0", modules[1].LatestVersion)
+	}
+	if modules[1].SourceURL != "https://go.googlesource.com/mod" {
+		t.Errorf("mod source = %q", modules[1].SourceURL)
+	}
+	wantTime := time.Date(2024, 3, 15, 10, 30, 0, 0, time.UTC)
+	if !modules[1].VersionTime.Equal(wantTime) {
+		t.Errorf("mod time = %v, want %v", modules[1].VersionTime, wantTime)
+	}
+	// golang.org/x/text
+	if modules[2].LatestVersion != "v0.21.0" {
+		t.Errorf("text latest = %q, want v0.21.0", modules[2].LatestVersion)
+	}
+}
+
+func TestEnrichNonGitHub_WorkerPool_AllGitHub(t *testing.T) {
+	modules := []Module{
+		{Path: "github.com/foo/bar", Version: "v1.0.0", Owner: "foo", Repo: "bar"},
+	}
+
+	r := &resolver{client: http.DefaultClient, proxyBaseURL: "http://unused"}
+	enrichNonGitHubWithResolver(modules, 4, r)
+
+	if modules[0].LatestVersion != "" {
+		t.Errorf("GitHub module should not be enriched, got %q", modules[0].LatestVersion)
+	}
+}
+
+func TestEnrichAcrossModules_WorkerPool(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/golang.org/x/mod/@latest":
+			fmt.Fprint(w, `{"Version":"v0.22.0","Origin":{"VCS":"git","URL":"https://go.googlesource.com/mod"}}`)
+		case "/golang.org/x/mod/@v/v0.17.0.info":
+			fmt.Fprint(w, `{"Version":"v0.17.0","Time":"2024-03-15T10:30:00Z"}`)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+
+	modules := []moduleInfo{
+		{
+			nonGHModules: []Module{
+				{Path: "golang.org/x/mod", Version: "v0.17.0"},
+			},
+		},
+		{
+			nonGHModules: []Module{
+				{Path: "golang.org/x/mod", Version: "v0.17.0"}, // duplicate
+			},
+		},
+	}
+
+	r := &resolver{client: srv.Client(), proxyBaseURL: srv.URL}
+	enrichAcrossModulesWithResolver(modules, r)
+
+	// Both instances should be enriched.
+	if modules[0].nonGHModules[0].LatestVersion != "v0.22.0" {
+		t.Errorf("modules[0] mod latest = %q, want v0.22.0", modules[0].nonGHModules[0].LatestVersion)
+	}
+	if modules[1].nonGHModules[0].LatestVersion != "v0.22.0" {
+		t.Errorf("modules[1] mod latest = %q, want v0.22.0", modules[1].nonGHModules[0].LatestVersion)
+	}
+	wantTime := time.Date(2024, 3, 15, 10, 30, 0, 0, time.UTC)
+	if !modules[0].nonGHModules[0].VersionTime.Equal(wantTime) {
+		t.Errorf("modules[0] mod time = %v, want %v", modules[0].nonGHModules[0].VersionTime, wantTime)
+	}
+}
+
+func TestEnrichAcrossModules_WorkerPool_Empty(t *testing.T) {
+	modules := []moduleInfo{
+		{
+			nonGHModules: []Module{},
+		},
+	}
+
+	r := &resolver{client: http.DefaultClient, proxyBaseURL: "http://unused"}
+	enrichAcrossModulesWithResolver(modules, r)
+	// Should not panic or modify anything.
+}
+
 func TestHostDomain(t *testing.T) {
 	tests := []struct {
 		input string
