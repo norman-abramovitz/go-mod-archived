@@ -104,7 +104,7 @@ func main() {
 	}
 
 	// Filter to GitHub modules and deduplicate
-	githubModules, nonGitHubCount := FilterGitHub(allModules, *directOnly)
+	githubModules, nonGitHubModules := FilterGitHub(allModules, *directOnly)
 
 	if len(githubModules) == 0 {
 		fmt.Fprintf(os.Stderr, "No GitHub modules found in %s\n", gomodPath)
@@ -164,14 +164,14 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Warning: could not run go mod graph: %v\n", err)
 		} else {
 			if *jsonFlag {
-				PrintTreeJSON(results, graph, allModules, fileMatches, nonGitHubCount, deprecatedModules)
+				PrintTreeJSON(results, graph, allModules, fileMatches, nonGitHubModules, deprecatedModules)
 			} else {
 				PrintTree(results, graph, allModules, fileMatches)
 				if len(deprecatedModules) > 0 {
 					PrintDeprecatedTable(deprecatedModules)
 				}
-				if nonGitHubCount > 0 {
-					fmt.Fprintf(os.Stderr, "\nSkipped %d non-GitHub modules.\n", nonGitHubCount)
+				if len(nonGitHubModules) > 0 {
+					PrintSkippedTable(nonGitHubModules)
 				}
 			}
 			if hasArchived {
@@ -183,9 +183,9 @@ func main() {
 
 	// Output
 	if *jsonFlag {
-		PrintJSON(results, nonGitHubCount, *allFlag, fileMatches, deprecatedModules)
+		PrintJSON(results, nonGitHubModules, *allFlag, fileMatches, deprecatedModules)
 	} else {
-		PrintTable(results, nonGitHubCount, *allFlag, deprecatedModules)
+		PrintTable(results, nonGitHubModules, *allFlag, deprecatedModules)
 		if fileMatches != nil {
 			PrintFiles(results, fileMatches)
 		}

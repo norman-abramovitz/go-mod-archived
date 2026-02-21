@@ -78,14 +78,14 @@ func ModuleName(path string) (string, error) {
 
 // FilterGitHub separates modules into GitHub and non-GitHub.
 // GitHub modules are deduplicated by owner/repo.
-func FilterGitHub(modules []Module, directOnly bool) (github []Module, nonGitHubCount int) {
+func FilterGitHub(modules []Module, directOnly bool) (github []Module, nonGitHub []Module) {
 	seen := make(map[string]bool)
 	for _, m := range modules {
 		if directOnly && !m.Direct {
 			continue
 		}
 		if m.Owner == "" {
-			nonGitHubCount++
+			nonGitHub = append(nonGitHub, m)
 			continue
 		}
 		key := m.Owner + "/" + m.Repo
@@ -95,5 +95,5 @@ func FilterGitHub(modules []Module, directOnly bool) (github []Module, nonGitHub
 		seen[key] = true
 		github = append(github, m)
 	}
-	return github, nonGitHubCount
+	return github, nonGitHub
 }

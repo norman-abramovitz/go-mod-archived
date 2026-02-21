@@ -53,8 +53,15 @@ func TestFilterGitHub(t *testing.T) {
 		if len(gh) != 3 {
 			t.Errorf("expected 3 GitHub modules, got %d", len(gh))
 		}
-		if nonGH != 2 {
-			t.Errorf("expected 2 non-GitHub modules, got %d", nonGH)
+		if len(nonGH) != 2 {
+			t.Errorf("expected 2 non-GitHub modules, got %d", len(nonGH))
+		}
+		// Verify the skipped modules are the expected ones
+		if nonGH[0].Path != "golang.org/x/mod" {
+			t.Errorf("nonGH[0].Path = %q, want %q", nonGH[0].Path, "golang.org/x/mod")
+		}
+		if nonGH[1].Path != "google.golang.org/grpc" {
+			t.Errorf("nonGH[1].Path = %q, want %q", nonGH[1].Path, "google.golang.org/grpc")
 		}
 	})
 
@@ -65,15 +72,15 @@ func TestFilterGitHub(t *testing.T) {
 			t.Errorf("expected 2 direct GitHub modules, got %d", len(gh))
 		}
 		// golang.org/x/mod and google.golang.org/grpc are direct non-GH
-		if nonGH != 2 {
-			t.Errorf("expected 2 non-GitHub modules, got %d", nonGH)
+		if len(nonGH) != 2 {
+			t.Errorf("expected 2 non-GitHub modules, got %d", len(nonGH))
 		}
 	})
 
 	t.Run("empty input", func(t *testing.T) {
 		gh, nonGH := FilterGitHub(nil, false)
-		if len(gh) != 0 || nonGH != 0 {
-			t.Errorf("expected empty results, got %d GitHub, %d non-GitHub", len(gh), nonGH)
+		if len(gh) != 0 || len(nonGH) != 0 {
+			t.Errorf("expected empty results, got %d GitHub, %d non-GitHub", len(gh), len(nonGH))
 		}
 	})
 }

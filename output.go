@@ -22,9 +22,27 @@ func fmtDate(t time.Time) string {
 	return t.Format(dateFmt)
 }
 
+// PrintSkippedTable outputs a section listing skipped non-GitHub modules.
+func PrintSkippedTable(modules []Module) {
+	sort.Slice(modules, func(i, j int) bool {
+		return modules[i].Path < modules[j].Path
+	})
+	fmt.Fprintf(os.Stderr, "\nSKIPPED MODULES (%d non-GitHub %s)\n\n", len(modules), pluralize(len(modules), "module", "modules"))
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT")
+	for _, m := range modules {
+		direct := "indirect"
+		if m.Direct {
+			direct = "direct"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\n", m.Path, m.Version, direct)
+	}
+	w.Flush()
+}
+
 // PrintTable outputs archived (or all) results in a human-readable table.
 // If deprecatedModules is non-nil, a DEPRECATED MODULES section is appended.
-func PrintTable(results []RepoStatus, nonGitHubCount int, showAll bool, deprecatedModules ...[]Module) {
+func PrintTable(results []RepoStatus, nonGitHubModules []Module, showAll bool, deprecatedModules ...[]Module) {
 	// Separate archived, not-found, and active
 	var archived, notFound, active []RepoStatus
 	for _, r := range results {
@@ -106,8 +124,8 @@ func PrintTable(results []RepoStatus, nonGitHubCount int, showAll bool, deprecat
 		w.Flush()
 	}
 
-	if nonGitHubCount > 0 {
-		fmt.Fprintf(os.Stderr, "\nSkipped %d non-GitHub modules.\n", nonGitHubCount)
+	if len(nonGitHubModules) > 0 {
+		PrintSkippedTable(nonGitHubModules)
 	}
 }
 
@@ -166,14 +184,22 @@ func pluralize(n int, singular, plural string) string {
 	return plural
 }
 
+// JSONSkippedModule represents a skipped non-GitHub module in JSON output.
+type JSONSkippedModule struct {
+	Module  string `json:"module"`
+	Version string `json:"version"`
+	Direct  bool   `json:"direct"`
+}
+
 // JSONOutput is the structure for JSON output mode.
 type JSONOutput struct {
-	Archived       []JSONModule `json:"archived"`
-	Deprecated     []JSONModule `json:"deprecated,omitempty"`
-	NotFound       []JSONModule `json:"not_found,omitempty"`
-	Active         []JSONModule `json:"active,omitempty"`
-	SkippedNonGH   int          `json:"skipped_non_github"`
-	TotalChecked   int          `json:"total_checked"`
+	Archived       []JSONModule        `json:"archived"`
+	Deprecated     []JSONModule        `json:"deprecated,omitempty"`
+	NotFound       []JSONModule        `json:"not_found,omitempty"`
+	Active         []JSONModule        `json:"active,omitempty"`
+	SkippedNonGH   int                 `json:"skipped_non_github"`
+	SkippedModules []JSONSkippedModule `json:"skipped_modules,omitempty"`
+	TotalChecked   int                 `json:"total_checked"`
 }
 
 type JSONModule struct {
@@ -198,11 +224,19 @@ type JSONSourceFile struct {
 
 // buildJSONOutput creates the JSONOutput data structure without writing it.
 // deprecatedModules is optional; if provided, the first element is used.
-func buildJSONOutput(results []RepoStatus, nonGitHubCount int, showAll bool, fileMatches map[string][]FileMatch, deprecatedModules ...[]Module) JSONOutput {
+func buildJSONOutput(results []RepoStatus, nonGitHubModules []Module, showAll bool, fileMatches map[string][]FileMatch, deprecatedModules ...[]Module) JSONOutput {
 	out := JSONOutput{
-		SkippedNonGH: nonGitHubCount,
+		SkippedNonGH: len(nonGitHubModules),
 		TotalChecked: len(results),
 		Archived:     []JSONModule{},
+	}
+
+	for _, m := range nonGitHubModules {
+		out.SkippedModules = append(out.SkippedModules, JSONSkippedModule{
+			Module:  m.Path,
+			Version: m.Version,
+			Direct:  m.Direct,
+		})
 	}
 
 	for _, r := range results {
@@ -262,8 +296,8 @@ func buildJSONOutput(results []RepoStatus, nonGitHubCount int, showAll bool, fil
 // PrintJSON outputs results as JSON. If fileMatches is non-nil, archived
 // modules will include source_files arrays.
 // deprecatedModules is optional; if provided, the first element is used.
-func PrintJSON(results []RepoStatus, nonGitHubCount int, showAll bool, fileMatches map[string][]FileMatch, deprecatedModules ...[]Module) {
-	out := buildJSONOutput(results, nonGitHubCount, showAll, fileMatches, deprecatedModules...)
+func PrintJSON(results []RepoStatus, nonGitHubModules []Module, showAll bool, fileMatches map[string][]FileMatch, deprecatedModules ...[]Module) {
+	out := buildJSONOutput(results, nonGitHubModules, showAll, fileMatches, deprecatedModules...)
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	enc.Encode(out)
@@ -497,10 +531,11 @@ func PrintTree(results []RepoStatus, graph map[string][]string, allModules []Mod
 
 // JSONTreeOutput is the structure for --tree --json output mode.
 type JSONTreeOutput struct {
-	Tree         []JSONTreeEntry `json:"tree"`
-	Deprecated   []JSONModule    `json:"deprecated,omitempty"`
-	SkippedNonGH int             `json:"skipped_non_github"`
-	TotalChecked int             `json:"total_checked"`
+	Tree           []JSONTreeEntry     `json:"tree"`
+	Deprecated     []JSONModule        `json:"deprecated,omitempty"`
+	SkippedNonGH   int                 `json:"skipped_non_github"`
+	SkippedModules []JSONSkippedModule `json:"skipped_modules,omitempty"`
+	TotalChecked   int                 `json:"total_checked"`
 }
 
 // JSONTreeEntry represents a direct dependency in the JSON tree.
@@ -527,13 +562,21 @@ type JSONTreeArchivedDep struct {
 
 // buildTreeJSONOutput creates the JSONTreeOutput data structure without writing it.
 // deprecatedModules is optional; if provided, the first element is used.
-func buildTreeJSONOutput(results []RepoStatus, graph map[string][]string, allModules []Module, fileMatches map[string][]FileMatch, nonGitHubCount int, deprecatedModules ...[]Module) JSONTreeOutput {
+func buildTreeJSONOutput(results []RepoStatus, graph map[string][]string, allModules []Module, fileMatches map[string][]FileMatch, nonGitHubModules []Module, deprecatedModules ...[]Module) JSONTreeOutput {
 	entries, ctx := buildTree(results, graph, allModules)
 
 	out := JSONTreeOutput{
 		Tree:         []JSONTreeEntry{},
-		SkippedNonGH: nonGitHubCount,
+		SkippedNonGH: len(nonGitHubModules),
 		TotalChecked: len(results),
+	}
+
+	for _, m := range nonGitHubModules {
+		out.SkippedModules = append(out.SkippedModules, JSONSkippedModule{
+			Module:  m.Path,
+			Version: m.Version,
+			Direct:  m.Direct,
+		})
 	}
 
 	// Add deprecated modules if provided.
@@ -622,8 +665,8 @@ func buildTreeJSONOutput(results []RepoStatus, graph map[string][]string, allMod
 
 // PrintTreeJSON outputs the dependency tree as JSON.
 // deprecatedModules is optional; if provided, the first element is used.
-func PrintTreeJSON(results []RepoStatus, graph map[string][]string, allModules []Module, fileMatches map[string][]FileMatch, nonGitHubCount int, deprecatedModules ...[]Module) {
-	out := buildTreeJSONOutput(results, graph, allModules, fileMatches, nonGitHubCount, deprecatedModules...)
+func PrintTreeJSON(results []RepoStatus, graph map[string][]string, allModules []Module, fileMatches map[string][]FileMatch, nonGitHubModules []Module, deprecatedModules ...[]Module) {
+	out := buildTreeJSONOutput(results, graph, allModules, fileMatches, nonGitHubModules, deprecatedModules...)
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	enc.Encode(out)

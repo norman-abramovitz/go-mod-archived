@@ -81,7 +81,7 @@ type moduleInfo struct {
 	moduleName    string
 	allModules    []Module
 	githubModules []Module
-	nonGHCount    int
+	nonGHModules  []Module
 }
 
 // getDeprecatedModules returns modules with non-empty Deprecated field,
@@ -157,7 +157,7 @@ func runRecursive(rootDir string, cfg runConfig) int {
 	for i := range modules {
 		ghMods, nonGH := FilterGitHub(modules[i].allModules, cfg.directOnly)
 		modules[i].githubModules = ghMods
-		modules[i].nonGHCount = nonGH
+		modules[i].nonGHModules = nonGH
 
 		for _, m := range ghMods {
 			key := m.Owner + "/" + m.Repo
@@ -238,7 +238,7 @@ func runRecursiveJSON(modules []moduleInfo, statusMap map[string]RepoStatus, cfg
 			}
 
 			deprecatedModules := getDeprecatedModules(mi.allModules, cfg.directOnly, cfg.deprecatedMode)
-			treeOut := buildTreeJSONOutput(results, graph, mi.allModules, fileMatches, mi.nonGHCount, deprecatedModules)
+			treeOut := buildTreeJSONOutput(results, graph, mi.allModules, fileMatches, mi.nonGHModules, deprecatedModules)
 			out.Modules = append(out.Modules, RecursiveJSONTreeEntry{
 				GoMod:          mi.relPath,
 				ModulePath:     mi.moduleName,
@@ -270,7 +270,7 @@ func runRecursiveJSON(modules []moduleInfo, statusMap map[string]RepoStatus, cfg
 			}
 
 			deprecatedModules := getDeprecatedModules(mi.allModules, cfg.directOnly, cfg.deprecatedMode)
-			jsonOut := buildJSONOutput(results, mi.nonGHCount, cfg.showAll, fileMatches, deprecatedModules)
+			jsonOut := buildJSONOutput(results, mi.nonGHModules, cfg.showAll, fileMatches, deprecatedModules)
 			out.Modules = append(out.Modules, RecursiveJSONEntry{
 				GoMod:      mi.relPath,
 				ModulePath: mi.moduleName,
@@ -329,14 +329,14 @@ func runRecursiveText(modules []moduleInfo, statusMap map[string]RepoStatus, cfg
 				if len(deprecatedModules) > 0 {
 					PrintDeprecatedTable(deprecatedModules)
 				}
-				if mi.nonGHCount > 0 {
-					fmt.Fprintf(os.Stderr, "\nSkipped %d non-GitHub modules.\n", mi.nonGHCount)
+				if len(mi.nonGHModules) > 0 {
+					PrintSkippedTable(mi.nonGHModules)
 				}
 				continue
 			}
 		}
 
-		PrintTable(results, mi.nonGHCount, cfg.showAll, deprecatedModules)
+		PrintTable(results, mi.nonGHModules, cfg.showAll, deprecatedModules)
 		if fileMatches != nil {
 			PrintFiles(results, fileMatches)
 		}
