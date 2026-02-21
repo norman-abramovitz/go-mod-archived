@@ -1,4 +1,4 @@
-module github.com/normank/modrot
+module github.com/norman-abramovitz/modrot
 
 go 1.25.0
 
