@@ -8,9 +8,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 func main() {
+	// Extract --duration before reorderArgs and flag.Parse, since it
+	// supports optional values (--duration or --duration=DATE) which
+	// Go's flag package cannot handle.
+	extractDurationFlag()
+
 	// Reorder args so flags can appear after the positional argument.
 	// Go's flag package stops parsing at the first non-flag argument.
 	reorderArgs()
@@ -30,6 +36,7 @@ func main() {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: modrot [flags] [path/to/go.mod | path/to/dir]\n\nDetect archived GitHub dependencies in a Go project.\n\nFlags:\n")
 		flag.PrintDefaults()
+		fmt.Fprintf(os.Stderr, "  -duration / --duration[=YYYY-MM-DD]\n    \tShow how long dependencies have been archived (default: today)\n")
 	}
 	flag.Parse()
 
@@ -73,6 +80,9 @@ func main() {
 			resolveMode:    *resolveFlag,
 			deprecatedMode: *deprecatedFlag,
 			goVersion:      *goVersionFlag,
+			goToolchain:    goToolchainVersion(),
+			durationMode:   durationEnabled,
+			durationDate:   durationEndDate,
 		}))
 	}
 
@@ -88,6 +98,15 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(2)
 	}
+
+	// Print module header (same format as recursive mode)
+	modName, _ := ModuleName(gomodPath)
+	cwd, _ := os.Getwd()
+	relPath, relErr := filepath.Rel(cwd, gomodPath)
+	if relErr != nil {
+		relPath = gomodPath
+	}
+	fmt.Fprintf(os.Stderr, "=== %s — %s (%s) ===\n", relPath, modName, goToolchainVersion())
 
 	// Resolve vanity imports to GitHub repos
 	if *resolveFlag {
@@ -233,6 +252,50 @@ func reorderArgs() {
 	reordered = append(reordered, flags...)
 	reordered = append(reordered, positional...)
 	os.Args = reordered
+}
+
+// goToolchainVersion returns the Go toolchain version string (e.g. "go1.23.4")
+// by running `go version` and extracting the version token.
+func goToolchainVersion() string {
+	out, err := exec.Command("go", "version").Output()
+	if err != nil {
+		return "go (unknown)"
+	}
+	// Output format: "go version go1.23.4 darwin/arm64"
+	fields := strings.Fields(string(out))
+	for _, f := range fields {
+		if strings.HasPrefix(f, "go1") || strings.HasPrefix(f, "go0") {
+			return f
+		}
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// extractDurationFlag scans os.Args for --duration or -duration, which
+// supports an optional date value (--duration or --duration=2026-01-01).
+// Go's flag package doesn't handle optional-value flags, so we extract
+// this flag before flag.Parse() and remove it from os.Args.
+func extractDurationFlag() {
+	var filtered []string
+	for _, arg := range os.Args {
+		switch {
+		case arg == "--duration" || arg == "-duration":
+			durationEnabled = true
+			durationEndDate = time.Now()
+		case strings.HasPrefix(arg, "--duration=") || strings.HasPrefix(arg, "-duration="):
+			durationEnabled = true
+			dateStr := arg[strings.Index(arg, "=")+1:]
+			t, err := time.Parse("2006-01-02", dateStr)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: invalid duration date %q (expected YYYY-MM-DD)\n", dateStr)
+				os.Exit(2)
+			}
+			durationEndDate = t
+		default:
+			filtered = append(filtered, arg)
+		}
+	}
+	os.Args = filtered
 }
 
 // parseModGraph runs `go mod graph` in the given directory and returns

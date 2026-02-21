@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"testing"
+	"time"
 )
 
 func TestReorderArgs(t *testing.T) {
@@ -96,5 +97,131 @@ func TestReorderArgs(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestExtractDurationFlag_NoFlag(t *testing.T) {
+	saved := os.Args
+	savedEnabled := durationEnabled
+	savedEnd := durationEndDate
+	defer func() {
+		os.Args = saved
+		durationEnabled = savedEnabled
+		durationEndDate = savedEnd
+	}()
+
+	durationEnabled = false
+	durationEndDate = time.Time{}
+	os.Args = []string{"cmd", "--files", "path/go.mod"}
+	extractDurationFlag()
+
+	if durationEnabled {
+		t.Error("expected durationEnabled=false when no --duration flag")
+	}
+	// Args should be unchanged
+	if len(os.Args) != 3 {
+		t.Errorf("expected 3 args, got %d: %v", len(os.Args), os.Args)
+	}
+}
+
+func TestExtractDurationFlag_BareFlag(t *testing.T) {
+	saved := os.Args
+	savedEnabled := durationEnabled
+	savedEnd := durationEndDate
+	defer func() {
+		os.Args = saved
+		durationEnabled = savedEnabled
+		durationEndDate = savedEnd
+	}()
+
+	durationEnabled = false
+	durationEndDate = time.Time{}
+	os.Args = []string{"cmd", "--duration", "--files", "path/go.mod"}
+	extractDurationFlag()
+
+	if !durationEnabled {
+		t.Error("expected durationEnabled=true")
+	}
+	if durationEndDate.IsZero() {
+		t.Error("expected durationEndDate to be set to today")
+	}
+	// --duration should be removed from args
+	for _, arg := range os.Args {
+		if arg == "--duration" {
+			t.Error("--duration should have been removed from os.Args")
+		}
+	}
+	if len(os.Args) != 3 {
+		t.Errorf("expected 3 args after removing --duration, got %d: %v", len(os.Args), os.Args)
+	}
+}
+
+func TestExtractDurationFlag_WithDate(t *testing.T) {
+	saved := os.Args
+	savedEnabled := durationEnabled
+	savedEnd := durationEndDate
+	defer func() {
+		os.Args = saved
+		durationEnabled = savedEnabled
+		durationEndDate = savedEnd
+	}()
+
+	durationEnabled = false
+	durationEndDate = time.Time{}
+	os.Args = []string{"cmd", "--duration=2026-01-15", "--files"}
+	extractDurationFlag()
+
+	if !durationEnabled {
+		t.Error("expected durationEnabled=true")
+	}
+	want := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	if !durationEndDate.Equal(want) {
+		t.Errorf("durationEndDate = %v, want %v", durationEndDate, want)
+	}
+	// --duration=DATE should be removed from args
+	if len(os.Args) != 2 {
+		t.Errorf("expected 2 args after removing --duration=DATE, got %d: %v", len(os.Args), os.Args)
+	}
+}
+
+func TestExtractDurationFlag_SingleDash(t *testing.T) {
+	saved := os.Args
+	savedEnabled := durationEnabled
+	savedEnd := durationEndDate
+	defer func() {
+		os.Args = saved
+		durationEnabled = savedEnabled
+		durationEndDate = savedEnd
+	}()
+
+	durationEnabled = false
+	os.Args = []string{"cmd", "-duration"}
+	extractDurationFlag()
+
+	if !durationEnabled {
+		t.Error("expected durationEnabled=true with single dash")
+	}
+}
+
+func TestExtractDurationFlag_SingleDashWithDate(t *testing.T) {
+	saved := os.Args
+	savedEnabled := durationEnabled
+	savedEnd := durationEndDate
+	defer func() {
+		os.Args = saved
+		durationEnabled = savedEnabled
+		durationEndDate = savedEnd
+	}()
+
+	durationEnabled = false
+	os.Args = []string{"cmd", "-duration=2025-06-15"}
+	extractDurationFlag()
+
+	if !durationEnabled {
+		t.Error("expected durationEnabled=true with single dash and date")
+	}
+	want := time.Date(2025, 6, 15, 0, 0, 0, 0, time.UTC)
+	if !durationEndDate.Equal(want) {
+		t.Errorf("durationEndDate = %v, want %v", durationEndDate, want)
 	}
 }

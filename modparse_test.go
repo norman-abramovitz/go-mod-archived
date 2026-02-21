@@ -183,6 +183,57 @@ func TestModuleName_FileNotFound(t *testing.T) {
 	}
 }
 
+func TestGoModInfo(t *testing.T) {
+	gomod := `module example.com/myapp
+
+go 1.23.4
+
+require github.com/foo/bar v1.0.0
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "go.mod")
+	os.WriteFile(path, []byte(gomod), 0644)
+
+	name, goVer, err := GoModInfo(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != "example.com/myapp" {
+		t.Errorf("moduleName = %q, want %q", name, "example.com/myapp")
+	}
+	if goVer != "1.23.4" {
+		t.Errorf("goVersion = %q, want %q", goVer, "1.23.4")
+	}
+}
+
+func TestGoModInfo_NoGoDirective(t *testing.T) {
+	gomod := `module example.com/myapp
+
+require github.com/foo/bar v1.0.0
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "go.mod")
+	os.WriteFile(path, []byte(gomod), 0644)
+
+	name, goVer, err := GoModInfo(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != "example.com/myapp" {
+		t.Errorf("moduleName = %q, want %q", name, "example.com/myapp")
+	}
+	if goVer != "" {
+		t.Errorf("goVersion = %q, want empty", goVer)
+	}
+}
+
+func TestGoModInfo_FileNotFound(t *testing.T) {
+	_, _, err := GoModInfo("/nonexistent/go.mod")
+	if err == nil {
+		t.Error("expected error for nonexistent file")
+	}
+}
+
 func TestFilterGitHub_DeduplicatesMultiPathRepos(t *testing.T) {
 	modules := []Module{
 		{Path: "github.com/openbao/openbao/api/v2", Version: "v2.0.0", Direct: true, Owner: "openbao", Repo: "openbao"},

@@ -1000,6 +1000,313 @@ func TestPrintTreeJSON_NoArchived(t *testing.T) {
 	}
 }
 
+func TestCalcDuration(t *testing.T) {
+	tests := []struct {
+		name       string
+		archivedAt time.Time
+		endDate    time.Time
+		wantY      int
+		wantM      int
+		wantD      int
+	}{
+		{
+			name:       "same day",
+			archivedAt: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+			endDate:    time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+			wantY:      0, wantM: 0, wantD: 1,
+		},
+		{
+			name:       "one day apart",
+			archivedAt: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+			endDate:    time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC),
+			wantY:      0, wantM: 0, wantD: 2,
+		},
+		{
+			name:       "one month",
+			archivedAt: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+			endDate:    time.Date(2024, 1, 31, 0, 0, 0, 0, time.UTC),
+			wantY:      0, wantM: 1, wantD: 0,
+		},
+		{
+			name:       "one year",
+			archivedAt: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+			endDate:    time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC),
+			wantY:      1, wantM: 0, wantD: 0,
+		},
+		{
+			name:       "years months and days",
+			archivedAt: time.Date(2022, 3, 15, 0, 0, 0, 0, time.UTC),
+			endDate:    time.Date(2024, 7, 22, 0, 0, 0, 0, time.UTC),
+			wantY:      2, wantM: 4, wantD: 8,
+		},
+		{
+			name:       "across year boundary",
+			archivedAt: time.Date(2023, 11, 15, 0, 0, 0, 0, time.UTC),
+			endDate:    time.Date(2024, 2, 20, 0, 0, 0, 0, time.UTC),
+			wantY:      0, wantM: 3, wantD: 6,
+		},
+		{
+			name:       "time is ignored",
+			archivedAt: time.Date(2024, 1, 1, 23, 59, 59, 0, time.UTC),
+			endDate:    time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+			wantY:      0, wantM: 0, wantD: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			y, m, d := calcDuration(tt.archivedAt, tt.endDate)
+			if y != tt.wantY || m != tt.wantM || d != tt.wantD {
+				t.Errorf("calcDuration() = (%d, %d, %d), want (%d, %d, %d)",
+					y, m, d, tt.wantY, tt.wantM, tt.wantD)
+			}
+		})
+	}
+}
+
+func TestFormatDuration(t *testing.T) {
+	savedEnabled := durationEnabled
+	savedEnd := durationEndDate
+	defer func() {
+		durationEnabled = savedEnabled
+		durationEndDate = savedEnd
+	}()
+
+	durationEnabled = true
+	durationEndDate = time.Date(2026, 2, 21, 0, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name       string
+		archivedAt time.Time
+		want       string
+	}{
+		{
+			name:       "years months days",
+			archivedAt: time.Date(2022, 3, 15, 0, 0, 0, 0, time.UTC),
+			want:       "3 years, 11 months, 7 days",
+		},
+		{
+			name:       "years and one day (inclusive)",
+			archivedAt: time.Date(2024, 2, 21, 0, 0, 0, 0, time.UTC),
+			want:       "2 years, 1 day",
+		},
+		{
+			name:       "only days",
+			archivedAt: time.Date(2026, 2, 20, 0, 0, 0, 0, time.UTC),
+			want:       "2 days",
+		},
+		{
+			name:       "one year and one day singular",
+			archivedAt: time.Date(2025, 2, 21, 0, 0, 0, 0, time.UTC),
+			want:       "1 year, 1 day",
+		},
+		{
+			name:       "one month singular",
+			archivedAt: time.Date(2026, 1, 21, 0, 0, 0, 0, time.UTC),
+			want:       "1 month, 1 day",
+		},
+		{
+			name:       "same day",
+			archivedAt: time.Date(2026, 2, 21, 0, 0, 0, 0, time.UTC),
+			want:       "1 day",
+		},
+		{
+			name:       "zero time returns empty",
+			archivedAt: time.Time{},
+			want:       "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatDuration(tt.archivedAt)
+			if got != tt.want {
+				t.Errorf("formatDuration() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatDurationShort(t *testing.T) {
+	savedEnabled := durationEnabled
+	savedEnd := durationEndDate
+	defer func() {
+		durationEnabled = savedEnabled
+		durationEndDate = savedEnd
+	}()
+
+	durationEnabled = true
+	durationEndDate = time.Date(2026, 2, 21, 0, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name       string
+		archivedAt time.Time
+		want       string
+	}{
+		{
+			name:       "years months days",
+			archivedAt: time.Date(2022, 3, 15, 0, 0, 0, 0, time.UTC),
+			want:       "3y 11m 7d",
+		},
+		{
+			name:       "years and one day",
+			archivedAt: time.Date(2024, 2, 21, 0, 0, 0, 0, time.UTC),
+			want:       "2y 1d",
+		},
+		{
+			name:       "only days",
+			archivedAt: time.Date(2026, 2, 20, 0, 0, 0, 0, time.UTC),
+			want:       "2d",
+		},
+		{
+			name:       "same day",
+			archivedAt: time.Date(2026, 2, 21, 0, 0, 0, 0, time.UTC),
+			want:       "1d",
+		},
+		{
+			name:       "zero time returns empty",
+			archivedAt: time.Time{},
+			want:       "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatDurationShort(tt.archivedAt)
+			if got != tt.want {
+				t.Errorf("formatDurationShort() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatDuration_Disabled(t *testing.T) {
+	savedEnabled := durationEnabled
+	defer func() { durationEnabled = savedEnabled }()
+
+	durationEnabled = false
+	got := formatDuration(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+	if got != "" {
+		t.Errorf("expected empty when disabled, got %q", got)
+	}
+}
+
+func TestPrintTable_WithDuration(t *testing.T) {
+	savedEnabled := durationEnabled
+	savedEnd := durationEndDate
+	defer func() {
+		durationEnabled = savedEnabled
+		durationEndDate = savedEnd
+	}()
+
+	durationEnabled = true
+	durationEndDate = time.Date(2026, 2, 21, 0, 0, 0, 0, time.UTC)
+
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/foo/bar", Version: "v1.0.0", Direct: true, Owner: "foo", Repo: "bar"},
+			IsArchived: true,
+			ArchivedAt: time.Date(2024, 7, 22, 0, 0, 0, 0, time.UTC),
+			PushedAt:   time.Date(2021, 5, 5, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	output := captureStdout(t, func() {
+		PrintTable(results, nil, false)
+	})
+
+	if !strings.Contains(output, "DURATION") {
+		t.Error("table should contain DURATION header when enabled")
+	}
+	if !strings.Contains(output, "1 year, 7 months") {
+		t.Errorf("table should contain duration value, got:\n%s", output)
+	}
+}
+
+func TestPrintTable_NoDurationColumn(t *testing.T) {
+	savedEnabled := durationEnabled
+	defer func() { durationEnabled = savedEnabled }()
+
+	durationEnabled = false
+
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/foo/bar", Version: "v1.0.0", Direct: true, Owner: "foo", Repo: "bar"},
+			IsArchived: true,
+			ArchivedAt: time.Date(2024, 7, 22, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	output := captureStdout(t, func() {
+		PrintTable(results, nil, false)
+	})
+
+	if strings.Contains(output, "DURATION") {
+		t.Error("table should NOT contain DURATION header when disabled")
+	}
+}
+
+func TestPrintJSON_WithDuration(t *testing.T) {
+	savedEnabled := durationEnabled
+	savedEnd := durationEndDate
+	defer func() {
+		durationEnabled = savedEnabled
+		durationEndDate = savedEnd
+	}()
+
+	durationEnabled = true
+	durationEndDate = time.Date(2026, 2, 21, 0, 0, 0, 0, time.UTC)
+
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/foo/bar", Version: "v1.0.0", Direct: true, Owner: "foo", Repo: "bar"},
+			IsArchived: true,
+			ArchivedAt: time.Date(2024, 7, 22, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	output := captureStdout(t, func() {
+		PrintJSON(results, nil, false, nil)
+	})
+
+	var out JSONOutput
+	if err := json.Unmarshal([]byte(output), &out); err != nil {
+		t.Fatalf("invalid JSON: %v\noutput: %s", err, output)
+	}
+
+	if out.Archived[0].ArchivedDuration == "" {
+		t.Error("expected archived_duration to be set")
+	}
+	if !strings.Contains(out.Archived[0].ArchivedDuration, "1 year") {
+		t.Errorf("duration = %q, expected to contain '1 year'", out.Archived[0].ArchivedDuration)
+	}
+}
+
+func TestFormatArchivedLine_WithDuration(t *testing.T) {
+	savedEnabled := durationEnabled
+	savedEnd := durationEndDate
+	defer func() {
+		durationEnabled = savedEnabled
+		durationEndDate = savedEnd
+	}()
+
+	durationEnabled = true
+	durationEndDate = time.Date(2026, 2, 21, 0, 0, 0, 0, time.UTC)
+
+	rs := RepoStatus{
+		ArchivedAt: time.Date(2024, 7, 22, 0, 0, 0, 0, time.UTC),
+		PushedAt:   time.Date(2021, 5, 5, 0, 0, 0, 0, time.UTC),
+	}
+
+	got := formatArchivedLine("github.com/foo/bar", "v1.0.0", rs)
+	if !strings.Contains(got, "1y 7m") {
+		t.Errorf("expected short duration in archived line, got %q", got)
+	}
+	if !strings.Contains(got, "last pushed") {
+		t.Errorf("expected last pushed still present, got %q", got)
+	}
+}
+
 func TestPluralize(t *testing.T) {
 	if got := pluralize(0, "file", "files"); got != "files" {
 		t.Errorf("pluralize(0) = %q, want %q", got, "files")

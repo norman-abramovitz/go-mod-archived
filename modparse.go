@@ -76,6 +76,25 @@ func ModuleName(path string) (string, error) {
 	return f.Module.Mod.Path, nil
 }
 
+// GoModInfo reads the module path and go directive version from a go.mod file.
+func GoModInfo(path string) (moduleName, goVersion string, err error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", err
+	}
+	f, err := modfile.Parse(path, data, nil)
+	if err != nil {
+		return "", "", err
+	}
+	if f.Module != nil {
+		moduleName = f.Module.Mod.Path
+	}
+	if f.Go != nil {
+		goVersion = f.Go.Version
+	}
+	return moduleName, goVersion, nil
+}
+
 // FilterGitHub separates modules into GitHub and non-GitHub.
 // GitHub modules are deduplicated by owner/repo.
 func FilterGitHub(modules []Module, directOnly bool) (github []Module, nonGitHub []Module) {

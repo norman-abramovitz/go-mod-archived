@@ -14,12 +14,85 @@ import (
 // set to "2006-01-02 15:04:05" with --time flag to include time.
 var dateFmt = "2006-01-02"
 
+// durationEnabled and durationEndDate control the --duration feature.
+var (
+	durationEnabled bool
+	durationEndDate time.Time
+)
+
 // fmtDate formats a time using the current dateFmt setting.
 func fmtDate(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
 	return t.Format(dateFmt)
+}
+
+// calcDuration computes the calendar duration (years, months, days) between
+// two dates. Both dates are normalized to midnight UTC. The result is
+// inclusive: same-day yields (0, 0, 1) because we add 1 day per the spec.
+func calcDuration(archivedAt, endDate time.Time) (years, months, days int) {
+	from := time.Date(archivedAt.Year(), archivedAt.Month(), archivedAt.Day(), 0, 0, 0, 0, time.UTC)
+	to := time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 0, 0, 0, 0, time.UTC)
+	// +1 day: "archived date to end date" is inclusive
+	to = to.AddDate(0, 0, 1)
+
+	years = to.Year() - from.Year()
+	months = int(to.Month()) - int(from.Month())
+	days = to.Day() - from.Day()
+
+	if days < 0 {
+		months--
+		// Days in the previous month relative to 'to'
+		days += time.Date(to.Year(), to.Month(), 0, 0, 0, 0, 0, time.UTC).Day()
+	}
+	if months < 0 {
+		years--
+		months += 12
+	}
+	return years, months, days
+}
+
+// formatDuration returns a human-readable duration string for how long a
+// dependency has been archived. Returns "" if duration mode is off or the
+// archived date is zero.
+func formatDuration(archivedAt time.Time) string {
+	if !durationEnabled || archivedAt.IsZero() {
+		return ""
+	}
+	y, m, d := calcDuration(archivedAt, durationEndDate)
+	var parts []string
+	if y > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s", y, pluralize(y, "year", "years")))
+	}
+	if m > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s", m, pluralize(m, "month", "months")))
+	}
+	if d > 0 || len(parts) == 0 {
+		parts = append(parts, fmt.Sprintf("%d %s", d, pluralize(d, "day", "days")))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// formatDurationShort returns a compact duration string (e.g. "2y 3m 15d")
+// for use in tree output. Returns "" if duration mode is off or the
+// archived date is zero.
+func formatDurationShort(archivedAt time.Time) string {
+	if !durationEnabled || archivedAt.IsZero() {
+		return ""
+	}
+	y, m, d := calcDuration(archivedAt, durationEndDate)
+	var parts []string
+	if y > 0 {
+		parts = append(parts, fmt.Sprintf("%dy", y))
+	}
+	if m > 0 {
+		parts = append(parts, fmt.Sprintf("%dm", m))
+	}
+	if d > 0 || len(parts) == 0 {
+		parts = append(parts, fmt.Sprintf("%dd", d))
+	}
+	return strings.Join(parts, " ")
 }
 
 // PrintSkippedTable outputs a section listing skipped non-GitHub modules.
@@ -65,7 +138,11 @@ func PrintTable(results []RepoStatus, nonGitHubModules []Module, showAll bool, d
 	if len(archived) > 0 {
 		fmt.Fprintf(os.Stderr, "\nARCHIVED DEPENDENCIES (%d of %d github.com modules)\n\n", len(archived), totalChecked)
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT\tARCHIVED AT\tLAST PUSHED")
+		if durationEnabled {
+			fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT\tARCHIVED AT\tDURATION\tLAST PUSHED")
+		} else {
+			fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT\tARCHIVED AT\tLAST PUSHED")
+		}
 		for _, r := range archived {
 			direct := "indirect"
 			if r.Module.Direct {
@@ -73,7 +150,12 @@ func PrintTable(results []RepoStatus, nonGitHubModules []Module, showAll bool, d
 			}
 			archivedAt := fmtDate(r.ArchivedAt)
 			pushedAt := fmtDate(r.PushedAt)
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, archivedAt, pushedAt)
+			if durationEnabled {
+				dur := formatDuration(r.ArchivedAt)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, archivedAt, dur, pushedAt)
+			} else {
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, archivedAt, pushedAt)
+			}
 		}
 		w.Flush()
 	} else {
@@ -209,6 +291,7 @@ type JSONModule struct {
 	Owner             string           `json:"owner"`
 	Repo              string           `json:"repo"`
 	ArchivedAt        string           `json:"archived_at,omitempty"`
+	ArchivedDuration  string           `json:"archived_duration,omitempty"`
 	PushedAt          string           `json:"pushed_at,omitempty"`
 	Error             string           `json:"error,omitempty"`
 	DeprecatedMessage string           `json:"deprecated_message,omitempty"`
@@ -258,6 +341,9 @@ func buildJSONOutput(results []RepoStatus, nonGitHubModules []Module, showAll bo
 		case r.IsArchived:
 			if !r.ArchivedAt.IsZero() {
 				jm.ArchivedAt = r.ArchivedAt.Format("2006-01-02T15:04:05Z")
+			}
+			if dur := formatDuration(r.ArchivedAt); dur != "" {
+				jm.ArchivedDuration = dur
 			}
 			if fileMatches != nil {
 				for _, fm := range fileMatches[r.Module.Path] {
@@ -316,6 +402,10 @@ func formatArchivedLine(modPath, version string, rs RepoStatus) string {
 	if !rs.ArchivedAt.IsZero() {
 		b.WriteString(" ")
 		b.WriteString(fmtDate(rs.ArchivedAt))
+	}
+	if dur := formatDurationShort(rs.ArchivedAt); dur != "" {
+		b.WriteString(", ")
+		b.WriteString(dur)
 	}
 	if !rs.PushedAt.IsZero() {
 		b.WriteString(", last pushed ")
@@ -544,6 +634,7 @@ type JSONTreeEntry struct {
 	Version                string                `json:"version"`
 	Archived               bool                  `json:"archived"`
 	ArchivedAt             string                `json:"archived_at,omitempty"`
+	ArchivedDuration       string                `json:"archived_duration,omitempty"`
 	PushedAt               string                `json:"pushed_at,omitempty"`
 	DeprecatedMessage      string                `json:"deprecated_message,omitempty"`
 	SourceFiles            []JSONSourceFile      `json:"source_files,omitempty"`
@@ -555,6 +646,7 @@ type JSONTreeArchivedDep struct {
 	Module            string           `json:"module"`
 	Version           string           `json:"version"`
 	ArchivedAt        string           `json:"archived_at,omitempty"`
+	ArchivedDuration  string           `json:"archived_duration,omitempty"`
 	PushedAt          string           `json:"pushed_at,omitempty"`
 	DeprecatedMessage string           `json:"deprecated_message,omitempty"`
 	SourceFiles       []JSONSourceFile `json:"source_files,omitempty"`
@@ -626,6 +718,9 @@ func buildTreeJSONOutput(results []RepoStatus, graph map[string][]string, allMod
 				if !rs.ArchivedAt.IsZero() {
 					entry.ArchivedAt = rs.ArchivedAt.Format("2006-01-02T15:04:05Z")
 				}
+				if dur := formatDuration(rs.ArchivedAt); dur != "" {
+					entry.ArchivedDuration = dur
+				}
 				if !rs.PushedAt.IsZero() {
 					entry.PushedAt = rs.PushedAt.Format("2006-01-02T15:04:05Z")
 				}
@@ -648,6 +743,9 @@ func buildTreeJSONOutput(results []RepoStatus, graph map[string][]string, allMod
 			if rs, ok := ctx.getStatus(a); ok {
 				if !rs.ArchivedAt.IsZero() {
 					dep.ArchivedAt = rs.ArchivedAt.Format("2006-01-02T15:04:05Z")
+				}
+				if dur := formatDuration(rs.ArchivedAt); dur != "" {
+					dep.ArchivedDuration = dur
 				}
 				if !rs.PushedAt.IsZero() {
 					dep.PushedAt = rs.PushedAt.Format("2006-01-02T15:04:05Z")
@@ -681,6 +779,7 @@ type RecursiveJSONOutput struct {
 type RecursiveJSONEntry struct {
 	GoMod      string `json:"go_mod"`
 	ModulePath string `json:"module_path"`
+	GoVersion  string `json:"go_version,omitempty"`
 	JSONOutput
 }
 
@@ -693,6 +792,7 @@ type RecursiveJSONTreeOutput struct {
 type RecursiveJSONTreeEntry struct {
 	GoMod      string `json:"go_mod"`
 	ModulePath string `json:"module_path"`
+	GoVersion  string `json:"go_version,omitempty"`
 	JSONTreeOutput
 }
 

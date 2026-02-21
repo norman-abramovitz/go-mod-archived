@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // runConfig holds parsed flag values for runRecursive.
@@ -19,6 +20,9 @@ type runConfig struct {
 	resolveMode    bool
 	deprecatedMode bool
 	goVersion      string
+	goToolchain    string // e.g. "go1.23.4" from `go version`
+	durationMode   bool
+	durationDate   time.Time
 }
 
 // findGoModFiles walks the directory tree rooted at dir and returns
@@ -243,6 +247,7 @@ func runRecursiveJSON(modules []moduleInfo, statusMap map[string]RepoStatus, cfg
 			out.Modules = append(out.Modules, RecursiveJSONTreeEntry{
 				GoMod:          mi.relPath,
 				ModulePath:     mi.moduleName,
+				GoVersion:      cfg.goToolchain,
 				JSONTreeOutput: treeOut,
 			})
 		}
@@ -275,6 +280,7 @@ func runRecursiveJSON(modules []moduleInfo, statusMap map[string]RepoStatus, cfg
 			out.Modules = append(out.Modules, RecursiveJSONEntry{
 				GoMod:      mi.relPath,
 				ModulePath: mi.moduleName,
+				GoVersion:  cfg.goToolchain,
 				JSONOutput: jsonOut,
 			})
 		}
@@ -302,7 +308,7 @@ func runRecursiveText(modules []moduleInfo, statusMap map[string]RepoStatus, cfg
 		if i > 0 {
 			fmt.Fprintln(os.Stderr)
 		}
-		fmt.Fprintf(os.Stderr, "=== %s — %s ===\n", mi.relPath, mi.moduleName)
+		fmt.Fprintf(os.Stderr, "=== %s — %s (%s) ===\n", mi.relPath, mi.moduleName, cfg.goToolchain)
 
 		if len(mi.githubModules) == 0 {
 			fmt.Fprintf(os.Stderr, "No GitHub modules found.\n")
