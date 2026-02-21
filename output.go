@@ -23,7 +23,8 @@ func fmtDate(t time.Time) string {
 }
 
 // PrintTable outputs archived (or all) results in a human-readable table.
-func PrintTable(results []RepoStatus, nonGitHubCount int, showAll bool) {
+// If deprecatedModules is non-nil, a DEPRECATED MODULES section is appended.
+func PrintTable(results []RepoStatus, nonGitHubCount int, showAll bool, deprecatedModules ...[]Module) {
 	// Separate archived, not-found, and active
 	var archived, notFound, active []RepoStatus
 	for _, r := range results {
@@ -86,6 +87,25 @@ func PrintTable(results []RepoStatus, nonGitHubCount int, showAll bool) {
 		w.Flush()
 	}
 
+	// Deprecated modules section
+	if len(deprecatedModules) > 0 && len(deprecatedModules[0]) > 0 {
+		deps := deprecatedModules[0]
+		sort.Slice(deps, func(i, j int) bool {
+			return deps[i].Path < deps[j].Path
+		})
+		fmt.Fprintf(os.Stderr, "\nDEPRECATED MODULES (%d %s)\n\n", len(deps), pluralize(len(deps), "module", "modules"))
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT\tMESSAGE")
+		for _, m := range deps {
+			direct := "indirect"
+			if m.Direct {
+				direct = "direct"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", m.Path, m.Version, direct, m.Deprecated)
+		}
+		w.Flush()
+	}
+
 	if nonGitHubCount > 0 {
 		fmt.Fprintf(os.Stderr, "\nSkipped %d non-GitHub modules.\n", nonGitHubCount)
 	}
@@ -119,6 +139,25 @@ func PrintFiles(results []RepoStatus, fileMatches map[string][]FileMatch) {
 	}
 }
 
+// PrintDeprecatedTable outputs a standalone deprecated modules table.
+// Used when --tree mode needs to append a deprecated section separately.
+func PrintDeprecatedTable(modules []Module) {
+	sort.Slice(modules, func(i, j int) bool {
+		return modules[i].Path < modules[j].Path
+	})
+	fmt.Fprintf(os.Stderr, "\nDEPRECATED MODULES (%d %s)\n\n", len(modules), pluralize(len(modules), "module", "modules"))
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT\tMESSAGE")
+	for _, m := range modules {
+		direct := "indirect"
+		if m.Direct {
+			direct = "direct"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", m.Path, m.Version, direct, m.Deprecated)
+	}
+	w.Flush()
+}
+
 // pluralize returns singular or plural form based on count.
 func pluralize(n int, singular, plural string) string {
 	if n == 1 {
@@ -130,6 +169,7 @@ func pluralize(n int, singular, plural string) string {
 // JSONOutput is the structure for JSON output mode.
 type JSONOutput struct {
 	Archived       []JSONModule `json:"archived"`
+	Deprecated     []JSONModule `json:"deprecated,omitempty"`
 	NotFound       []JSONModule `json:"not_found,omitempty"`
 	Active         []JSONModule `json:"active,omitempty"`
 	SkippedNonGH   int          `json:"skipped_non_github"`
@@ -137,15 +177,16 @@ type JSONOutput struct {
 }
 
 type JSONModule struct {
-	Module      string           `json:"module"`
-	Version     string           `json:"version"`
-	Direct      bool             `json:"direct"`
-	Owner       string           `json:"owner"`
-	Repo        string           `json:"repo"`
-	ArchivedAt  string           `json:"archived_at,omitempty"`
-	PushedAt    string           `json:"pushed_at,omitempty"`
-	Error       string           `json:"error,omitempty"`
-	SourceFiles []JSONSourceFile `json:"source_files,omitempty"`
+	Module            string           `json:"module"`
+	Version           string           `json:"version"`
+	Direct            bool             `json:"direct"`
+	Owner             string           `json:"owner"`
+	Repo              string           `json:"repo"`
+	ArchivedAt        string           `json:"archived_at,omitempty"`
+	PushedAt          string           `json:"pushed_at,omitempty"`
+	Error             string           `json:"error,omitempty"`
+	DeprecatedMessage string           `json:"deprecated_message,omitempty"`
+	SourceFiles       []JSONSourceFile `json:"source_files,omitempty"`
 }
 
 // JSONSourceFile represents a source file match in JSON output.
@@ -156,7 +197,8 @@ type JSONSourceFile struct {
 }
 
 // buildJSONOutput creates the JSONOutput data structure without writing it.
-func buildJSONOutput(results []RepoStatus, nonGitHubCount int, showAll bool, fileMatches map[string][]FileMatch) JSONOutput {
+// deprecatedModules is optional; if provided, the first element is used.
+func buildJSONOutput(results []RepoStatus, nonGitHubCount int, showAll bool, fileMatches map[string][]FileMatch, deprecatedModules ...[]Module) JSONOutput {
 	out := JSONOutput{
 		SkippedNonGH: nonGitHubCount,
 		TotalChecked: len(results),
@@ -200,13 +242,28 @@ func buildJSONOutput(results []RepoStatus, nonGitHubCount int, showAll bool, fil
 		}
 	}
 
+	// Add deprecated modules if provided.
+	if len(deprecatedModules) > 0 && len(deprecatedModules[0]) > 0 {
+		for _, m := range deprecatedModules[0] {
+			out.Deprecated = append(out.Deprecated, JSONModule{
+				Module:            m.Path,
+				Version:           m.Version,
+				Direct:            m.Direct,
+				Owner:             m.Owner,
+				Repo:              m.Repo,
+				DeprecatedMessage: m.Deprecated,
+			})
+		}
+	}
+
 	return out
 }
 
 // PrintJSON outputs results as JSON. If fileMatches is non-nil, archived
 // modules will include source_files arrays.
-func PrintJSON(results []RepoStatus, nonGitHubCount int, showAll bool, fileMatches map[string][]FileMatch) {
-	out := buildJSONOutput(results, nonGitHubCount, showAll, fileMatches)
+// deprecatedModules is optional; if provided, the first element is used.
+func PrintJSON(results []RepoStatus, nonGitHubCount int, showAll bool, fileMatches map[string][]FileMatch, deprecatedModules ...[]Module) {
+	out := buildJSONOutput(results, nonGitHubCount, showAll, fileMatches, deprecatedModules...)
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	enc.Encode(out)
@@ -242,9 +299,10 @@ type treeEntry struct {
 
 // treeContext holds precomputed lookups needed to render tree entries.
 type treeContext struct {
-	archivedPaths map[string]bool
-	versionByPath map[string]string
-	getStatus     func(string) (RepoStatus, bool)
+	archivedPaths    map[string]bool
+	deprecatedByPath map[string]string // module path → deprecation message
+	versionByPath    map[string]string
+	getStatus        func(string) (RepoStatus, bool)
 }
 
 // buildTree computes the tree entries and lookup context from results, graph,
@@ -275,13 +333,17 @@ func buildTree(results []RepoStatus, graph map[string][]string, allModules []Mod
 		}
 	}
 
-	// Build lookup from module path → version and owner/repo (from go.mod)
+	// Build lookup from module path → version, owner/repo, and deprecation (from go.mod)
 	versionByPath := make(map[string]string)
-	repoByPath := make(map[string]string) // module path → "owner/repo"
+	repoByPath := make(map[string]string)    // module path → "owner/repo"
+	deprecatedByPath := make(map[string]string) // module path → deprecation message
 	for _, m := range allModules {
 		versionByPath[m.Path] = m.Version
 		if m.Owner != "" {
 			repoByPath[m.Path] = m.Owner + "/" + m.Repo
+		}
+		if m.Deprecated != "" {
+			deprecatedByPath[m.Path] = m.Deprecated
 		}
 	}
 
@@ -299,9 +361,10 @@ func buildTree(results []RepoStatus, graph map[string][]string, allModules []Mod
 	}
 
 	ctx := &treeContext{
-		archivedPaths: archivedPaths,
-		versionByPath: versionByPath,
-		getStatus:     getStatus,
+		archivedPaths:    archivedPaths,
+		deprecatedByPath: deprecatedByPath,
+		versionByPath:    versionByPath,
+		getStatus:        getStatus,
 	}
 
 	if len(archivedPaths) == 0 {
@@ -390,12 +453,20 @@ func PrintTree(results []RepoStatus, graph map[string][]string, allModules []Mod
 		return fmt.Sprintf(" (%d %s)", n, pluralize(n, "file", "files"))
 	}
 
+	// deprecatedSuffix returns " [DEPRECATED]" if the module is deprecated.
+	deprecatedSuffix := func(modPath string) string {
+		if ctx.deprecatedByPath[modPath] != "" {
+			return " [DEPRECATED]"
+		}
+		return ""
+	}
+
 	for _, e := range entries {
 		if ctx.archivedPaths[e.directPath] {
 			if rs, ok := ctx.getStatus(e.directPath); ok {
-				fmt.Printf("%s%s\n", formatArchivedLine(e.directPath, ctx.versionByPath[e.directPath], rs), fileCountSuffix(e.directPath))
+				fmt.Printf("%s%s%s\n", formatArchivedLine(e.directPath, ctx.versionByPath[e.directPath], rs), deprecatedSuffix(e.directPath), fileCountSuffix(e.directPath))
 			} else {
-				fmt.Printf("%s [ARCHIVED]%s\n", e.directPath, fileCountSuffix(e.directPath))
+				fmt.Printf("%s [ARCHIVED]%s%s\n", e.directPath, deprecatedSuffix(e.directPath), fileCountSuffix(e.directPath))
 			}
 		} else {
 			ver := ctx.versionByPath[e.directPath]
@@ -416,9 +487,9 @@ func PrintTree(results []RepoStatus, graph map[string][]string, allModules []Mod
 				connector = "└── "
 			}
 			if rs, ok := ctx.getStatus(a); ok {
-				fmt.Printf("  %s%s%s\n", connector, formatArchivedLine(a, ctx.versionByPath[a], rs), fileCountSuffix(a))
+				fmt.Printf("  %s%s%s%s\n", connector, formatArchivedLine(a, ctx.versionByPath[a], rs), deprecatedSuffix(a), fileCountSuffix(a))
 			} else {
-				fmt.Printf("  %s%s [ARCHIVED]%s\n", connector, a, fileCountSuffix(a))
+				fmt.Printf("  %s%s [ARCHIVED]%s%s\n", connector, a, deprecatedSuffix(a), fileCountSuffix(a))
 			}
 		}
 	}
@@ -433,22 +504,24 @@ type JSONTreeOutput struct {
 
 // JSONTreeEntry represents a direct dependency in the JSON tree.
 type JSONTreeEntry struct {
-	Module                 string              `json:"module"`
-	Version                string              `json:"version"`
-	Archived               bool                `json:"archived"`
-	ArchivedAt             string              `json:"archived_at,omitempty"`
-	PushedAt               string              `json:"pushed_at,omitempty"`
-	SourceFiles            []JSONSourceFile    `json:"source_files,omitempty"`
+	Module                 string                `json:"module"`
+	Version                string                `json:"version"`
+	Archived               bool                  `json:"archived"`
+	ArchivedAt             string                `json:"archived_at,omitempty"`
+	PushedAt               string                `json:"pushed_at,omitempty"`
+	DeprecatedMessage      string                `json:"deprecated_message,omitempty"`
+	SourceFiles            []JSONSourceFile      `json:"source_files,omitempty"`
 	ArchivedDependencies   []JSONTreeArchivedDep `json:"archived_dependencies"`
 }
 
 // JSONTreeArchivedDep represents an archived transitive dependency.
 type JSONTreeArchivedDep struct {
-	Module      string           `json:"module"`
-	Version     string           `json:"version"`
-	ArchivedAt  string           `json:"archived_at,omitempty"`
-	PushedAt    string           `json:"pushed_at,omitempty"`
-	SourceFiles []JSONSourceFile `json:"source_files,omitempty"`
+	Module            string           `json:"module"`
+	Version           string           `json:"version"`
+	ArchivedAt        string           `json:"archived_at,omitempty"`
+	PushedAt          string           `json:"pushed_at,omitempty"`
+	DeprecatedMessage string           `json:"deprecated_message,omitempty"`
+	SourceFiles       []JSONSourceFile `json:"source_files,omitempty"`
 }
 
 // buildTreeJSONOutput creates the JSONTreeOutput data structure without writing it.
@@ -485,6 +558,7 @@ func buildTreeJSONOutput(results []RepoStatus, graph map[string][]string, allMod
 			Module:               e.directPath,
 			Version:              ctx.versionByPath[e.directPath],
 			Archived:             ctx.archivedPaths[e.directPath],
+			DeprecatedMessage:    ctx.deprecatedByPath[e.directPath],
 			ArchivedDependencies: []JSONTreeArchivedDep{},
 		}
 
@@ -508,8 +582,9 @@ func buildTreeJSONOutput(results []RepoStatus, graph map[string][]string, allMod
 			seen[a] = true
 
 			dep := JSONTreeArchivedDep{
-				Module:  a,
-				Version: ctx.versionByPath[a],
+				Module:            a,
+				Version:           ctx.versionByPath[a],
+				DeprecatedMessage: ctx.deprecatedByPath[a],
 			}
 			if rs, ok := ctx.getStatus(a); ok {
 				if !rs.ArchivedAt.IsZero() {

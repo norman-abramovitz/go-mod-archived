@@ -24,6 +24,7 @@ func main() {
 	timeFlag := flag.Bool("time", false, "Include time in date output (2006-01-02 15:04:05 instead of 2006-01-02)")
 	recursiveFlag := flag.Bool("recursive", false, "Scan all go.mod files in the directory tree")
 	resolveFlag := flag.Bool("resolve", false, "Resolve vanity import paths (e.g. google.golang.org/grpc) to GitHub repos")
+	deprecatedFlag := flag.Bool("deprecated", false, "Check for deprecated modules via the Go module proxy")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: go-mod-archived [flags] [path/to/go.mod | path/to/dir]\n\nDetect archived GitHub dependencies in a Go project.\n\nFlags:\n")
 		flag.PrintDefaults()
@@ -56,13 +57,14 @@ func main() {
 			rootDir = filepath.Dir(rootDir)
 		}
 		os.Exit(runRecursive(rootDir, runConfig{
-			jsonMode:    *jsonFlag,
-			showAll:     *allFlag,
-			directOnly:  *directOnly,
-			workers:     *workers,
-			treeMode:    *treeFlag,
-			filesMode:   *filesFlag,
-			resolveMode: *resolveFlag,
+			jsonMode:       *jsonFlag,
+			showAll:        *allFlag,
+			directOnly:     *directOnly,
+			workers:        *workers,
+			treeMode:       *treeFlag,
+			filesMode:      *filesFlag,
+			resolveMode:    *resolveFlag,
+			deprecatedMode: *deprecatedFlag,
 		}))
 	}
 
@@ -84,6 +86,14 @@ func main() {
 		resolved := ResolveVanityImports(allModules, 20)
 		if resolved > 0 {
 			fmt.Fprintf(os.Stderr, "Resolved %d non-GitHub modules to GitHub repos.\n", resolved)
+		}
+	}
+
+	// Check for deprecated modules via proxy
+	if *deprecatedFlag {
+		count := CheckDeprecations(allModules, 20)
+		if count > 0 {
+			fmt.Fprintf(os.Stderr, "Found %d deprecated %s.\n", count, pluralize(count, "module", "modules"))
 		}
 	}
 
@@ -128,6 +138,19 @@ func main() {
 		fileMatches = fm
 	}
 
+	// Collect deprecated modules for output
+	var deprecatedModules []Module
+	if *deprecatedFlag {
+		for _, m := range allModules {
+			if m.Deprecated != "" {
+				if *directOnly && !m.Direct {
+					continue
+				}
+				deprecatedModules = append(deprecatedModules, m)
+			}
+		}
+	}
+
 	// Handle --tree mode
 	if *treeFlag && hasArchived {
 		graph, err := parseModGraph(filepath.Dir(gomodPath))
@@ -138,6 +161,9 @@ func main() {
 				PrintTreeJSON(results, graph, allModules, fileMatches, nonGitHubCount)
 			} else {
 				PrintTree(results, graph, allModules, fileMatches)
+				if len(deprecatedModules) > 0 {
+					PrintDeprecatedTable(deprecatedModules)
+				}
 				if nonGitHubCount > 0 {
 					fmt.Fprintf(os.Stderr, "\nSkipped %d non-GitHub modules.\n", nonGitHubCount)
 				}
@@ -151,9 +177,9 @@ func main() {
 
 	// Output
 	if *jsonFlag {
-		PrintJSON(results, nonGitHubCount, *allFlag, fileMatches)
+		PrintJSON(results, nonGitHubCount, *allFlag, fileMatches, deprecatedModules)
 	} else {
-		PrintTable(results, nonGitHubCount, *allFlag)
+		PrintTable(results, nonGitHubCount, *allFlag, deprecatedModules)
 		if fileMatches != nil {
 			PrintFiles(results, fileMatches)
 		}

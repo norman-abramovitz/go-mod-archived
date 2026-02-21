@@ -10,13 +10,14 @@ import (
 
 // runConfig holds parsed flag values for runRecursive.
 type runConfig struct {
-	jsonMode    bool
-	showAll     bool
-	directOnly  bool
-	workers     int
-	treeMode    bool
-	filesMode   bool
-	resolveMode bool
+	jsonMode       bool
+	showAll        bool
+	directOnly     bool
+	workers        int
+	treeMode       bool
+	filesMode      bool
+	resolveMode    bool
+	deprecatedMode bool
 }
 
 // findGoModFiles walks the directory tree rooted at dir and returns
@@ -83,6 +84,25 @@ type moduleInfo struct {
 	nonGHCount    int
 }
 
+// getDeprecatedModules returns modules with non-empty Deprecated field,
+// respecting the directOnly filter. Returns nil if deprecatedMode is false.
+func getDeprecatedModules(allModules []Module, directOnly bool, deprecatedMode bool) []Module {
+	if !deprecatedMode {
+		return nil
+	}
+	var result []Module
+	for _, m := range allModules {
+		if m.Deprecated == "" {
+			continue
+		}
+		if directOnly && !m.Direct {
+			continue
+		}
+		result = append(result, m)
+	}
+	return result
+}
+
 // runRecursive scans a directory tree for go.mod files, queries GitHub
 // once for all unique repos, and outputs per-module results.
 // Returns the exit code (0 = clean, 1 = archived found, 2 = error).
@@ -120,6 +140,14 @@ func runRecursive(rootDir string, cfg runConfig) int {
 		resolved := resolveAcrossModules(modules)
 		if resolved > 0 {
 			fmt.Fprintf(os.Stderr, "Resolved %d non-GitHub modules to GitHub repos.\n", resolved)
+		}
+	}
+
+	// Phase 2.5: Check deprecations (before filtering)
+	if cfg.deprecatedMode {
+		count := checkDeprecationsAcrossModules(modules)
+		if count > 0 {
+			fmt.Fprintf(os.Stderr, "Found %d deprecated %s.\n", count, pluralize(count, "module", "modules"))
 		}
 	}
 
@@ -240,7 +268,8 @@ func runRecursiveJSON(modules []moduleInfo, statusMap map[string]RepoStatus, cfg
 				}
 			}
 
-			jsonOut := buildJSONOutput(results, mi.nonGHCount, cfg.showAll, fileMatches)
+			deprecatedModules := getDeprecatedModules(mi.allModules, cfg.directOnly, cfg.deprecatedMode)
+			jsonOut := buildJSONOutput(results, mi.nonGHCount, cfg.showAll, fileMatches, deprecatedModules)
 			out.Modules = append(out.Modules, RecursiveJSONEntry{
 				GoMod:      mi.relPath,
 				ModulePath: mi.moduleName,
@@ -288,12 +317,17 @@ func runRecursiveText(modules []moduleInfo, statusMap map[string]RepoStatus, cfg
 			}
 		}
 
+		deprecatedModules := getDeprecatedModules(mi.allModules, cfg.directOnly, cfg.deprecatedMode)
+
 		if cfg.treeMode && hasArchived {
 			graph, err := parseModGraph(filepath.Dir(mi.gomodPath))
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: could not run go mod graph: %v\n", err)
 			} else {
 				PrintTree(results, graph, mi.allModules, fileMatches)
+				if len(deprecatedModules) > 0 {
+					PrintDeprecatedTable(deprecatedModules)
+				}
 				if mi.nonGHCount > 0 {
 					fmt.Fprintf(os.Stderr, "\nSkipped %d non-GitHub modules.\n", mi.nonGHCount)
 				}
@@ -301,7 +335,7 @@ func runRecursiveText(modules []moduleInfo, statusMap map[string]RepoStatus, cfg
 			}
 		}
 
-		PrintTable(results, mi.nonGHCount, cfg.showAll)
+		PrintTable(results, mi.nonGHCount, cfg.showAll, deprecatedModules)
 		if fileMatches != nil {
 			PrintFiles(results, fileMatches)
 		}
