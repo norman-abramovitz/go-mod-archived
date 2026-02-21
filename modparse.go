@@ -4,18 +4,22 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"golang.org/x/mod/modfile"
 )
 
 // Module represents a parsed go.mod dependency.
 type Module struct {
-	Path       string // full module path, e.g. "github.com/foo/bar/v2"
-	Version    string
-	Direct     bool
-	Owner      string // GitHub owner (empty if non-GitHub)
-	Repo       string // GitHub repo name (empty if non-GitHub)
-	Deprecated string // deprecation message from go.mod, empty if not deprecated
+	Path          string    // full module path, e.g. "github.com/foo/bar/v2"
+	Version       string
+	Direct        bool
+	Owner         string    // GitHub owner (empty if non-GitHub)
+	Repo          string    // GitHub repo name (empty if non-GitHub)
+	Deprecated    string    // deprecation message from go.mod, empty if not deprecated
+	LatestVersion string    // latest version from proxy (empty if unavailable)
+	VersionTime   time.Time // publish time of current version from proxy
+	SourceURL     string    // VCS URL from proxy Origin.URL
 }
 
 // ParseGoMod reads and parses a go.mod file, returning all required modules.

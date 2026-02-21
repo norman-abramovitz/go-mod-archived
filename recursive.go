@@ -173,6 +173,9 @@ func runRecursive(rootDir string, cfg runConfig) int {
 		}
 	}
 
+	// Phase 3.5: Enrich non-GitHub modules with proxy data
+	enrichAcrossModules(modules)
+
 	if len(modules) == 0 {
 		fmt.Fprintf(os.Stderr, "No valid go.mod files found.\n")
 		return 2

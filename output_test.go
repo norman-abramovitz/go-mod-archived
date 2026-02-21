@@ -251,20 +251,23 @@ func TestPrintJSON_ArchivedOnly(t *testing.T) {
 	if out.Active != nil {
 		t.Error("expected no active modules when showAll=false")
 	}
-	if out.SkippedNonGH != 5 {
-		t.Errorf("skipped = %d, want 5", out.SkippedNonGH)
+	if out.NonGitHubCount != 5 {
+		t.Errorf("non_github_count = %d, want 5", out.NonGitHubCount)
 	}
-	if len(out.SkippedModules) != 5 {
-		t.Errorf("skipped_modules length = %d, want 5", len(out.SkippedModules))
+	if len(out.NonGitHubModules) != 5 {
+		t.Errorf("non_github_modules length = %d, want 5", len(out.NonGitHubModules))
 	}
-	if out.SkippedModules[0].Module != "golang.org/x/text" {
-		t.Errorf("skipped_modules[0].module = %q, want %q", out.SkippedModules[0].Module, "golang.org/x/text")
+	if out.NonGitHubModules[0].Module != "golang.org/x/text" {
+		t.Errorf("non_github_modules[0].module = %q, want %q", out.NonGitHubModules[0].Module, "golang.org/x/text")
 	}
-	if out.SkippedModules[0].Version != "v0.14.0" {
-		t.Errorf("skipped_modules[0].version = %q, want %q", out.SkippedModules[0].Version, "v0.14.0")
+	if out.NonGitHubModules[0].Version != "v0.14.0" {
+		t.Errorf("non_github_modules[0].version = %q, want %q", out.NonGitHubModules[0].Version, "v0.14.0")
 	}
-	if !out.SkippedModules[0].Direct {
-		t.Error("skipped_modules[0].direct should be true")
+	if !out.NonGitHubModules[0].Direct {
+		t.Error("non_github_modules[0].direct should be true")
+	}
+	if out.NonGitHubModules[0].Host != "golang.org" {
+		t.Errorf("non_github_modules[0].host = %q, want %q", out.NonGitHubModules[0].Host, "golang.org")
 	}
 	if out.TotalChecked != 2 {
 		t.Errorf("total = %d, want 2", out.TotalChecked)
@@ -853,14 +856,14 @@ func TestPrintTreeJSON_Basic(t *testing.T) {
 		t.Fatalf("invalid JSON: %v\noutput: %s", err, output)
 	}
 
-	if out.SkippedNonGH != 5 {
-		t.Errorf("skipped = %d, want 5", out.SkippedNonGH)
+	if out.NonGitHubCount != 5 {
+		t.Errorf("non_github_count = %d, want 5", out.NonGitHubCount)
 	}
-	if len(out.SkippedModules) != 5 {
-		t.Errorf("skipped_modules length = %d, want 5", len(out.SkippedModules))
+	if len(out.NonGitHubModules) != 5 {
+		t.Errorf("non_github_modules length = %d, want 5", len(out.NonGitHubModules))
 	}
-	if out.SkippedModules[0].Module != "golang.org/x/text" {
-		t.Errorf("skipped_modules[0].module = %q, want %q", out.SkippedModules[0].Module, "golang.org/x/text")
+	if out.NonGitHubModules[0].Module != "golang.org/x/text" {
+		t.Errorf("non_github_modules[0].module = %q, want %q", out.NonGitHubModules[0].Module, "golang.org/x/text")
 	}
 	if len(out.Tree) != 1 {
 		t.Fatalf("expected 1 tree entry, got %d", len(out.Tree))
@@ -1316,5 +1319,134 @@ func TestPluralize(t *testing.T) {
 	}
 	if got := pluralize(2, "file", "files"); got != "files" {
 		t.Errorf("pluralize(2) = %q, want %q", got, "files")
+	}
+}
+
+func TestPrintSkippedTable_Enriched(t *testing.T) {
+	modules := []Module{
+		{
+			Path:          "golang.org/x/mod",
+			Version:       "v0.17.0",
+			Direct:        true,
+			LatestVersion: "v0.22.0",
+			VersionTime:   time.Date(2024, 3, 15, 10, 30, 0, 0, time.UTC),
+			SourceURL:     "https://go.googlesource.com/mod",
+		},
+		{
+			Path:          "golang.org/x/text",
+			Version:       "v0.21.0",
+			Direct:        false,
+			LatestVersion: "v0.21.0", // same as current — should show "-"
+			VersionTime:   time.Date(2023, 10, 11, 0, 0, 0, 0, time.UTC),
+			SourceURL:     "https://go.googlesource.com/text",
+		},
+		{
+			Path:    "gopkg.in/yaml.v3",
+			Version: "v3.0.1",
+			Direct:  true,
+			// No enrichment data
+		},
+	}
+
+	output := captureStdout(t, func() {
+		PrintSkippedTable(modules)
+	})
+
+	// Check header columns
+	if !strings.Contains(output, "LATEST") {
+		t.Error("table should contain LATEST header")
+	}
+	if !strings.Contains(output, "PUBLISHED") {
+		t.Error("table should contain PUBLISHED header")
+	}
+	if !strings.Contains(output, "SOURCE") {
+		t.Error("table should contain SOURCE header")
+	}
+
+	// Check enriched values
+	if !strings.Contains(output, "v0.22.0") {
+		t.Error("table should show latest version v0.22.0")
+	}
+	if !strings.Contains(output, "2024-03-15") {
+		t.Error("table should show published date")
+	}
+	if !strings.Contains(output, "https://go.googlesource.com/mod") {
+		t.Error("table should show source URL")
+	}
+
+	// Latest same as current should show "-"
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "golang.org/x/text") {
+			if !strings.Contains(line, "-") {
+				t.Errorf("same-version latest should show '-', got line: %s", line)
+			}
+			break
+		}
+	}
+}
+
+func TestPrintJSON_NonGitHubModules(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/foo/bar", Version: "v1.0.0", Direct: true, Owner: "foo", Repo: "bar"},
+			IsArchived: true,
+			ArchivedAt: time.Date(2024, 7, 22, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	nonGitHubModules := []Module{
+		{
+			Path:          "golang.org/x/text",
+			Version:       "v0.14.0",
+			Direct:        true,
+			LatestVersion: "v0.21.0",
+			VersionTime:   time.Date(2023, 10, 11, 17, 42, 28, 0, time.UTC),
+			SourceURL:     "https://go.googlesource.com/text",
+		},
+	}
+
+	output := captureStdout(t, func() {
+		PrintJSON(results, nonGitHubModules, false, nil)
+	})
+
+	var out JSONOutput
+	if err := json.Unmarshal([]byte(output), &out); err != nil {
+		t.Fatalf("invalid JSON: %v\noutput: %s", err, output)
+	}
+
+	if out.NonGitHubCount != 1 {
+		t.Errorf("non_github_count = %d, want 1", out.NonGitHubCount)
+	}
+	if len(out.NonGitHubModules) != 1 {
+		t.Fatalf("non_github_modules length = %d, want 1", len(out.NonGitHubModules))
+	}
+
+	m := out.NonGitHubModules[0]
+	if m.LatestVersion != "v0.21.0" {
+		t.Errorf("latest_version = %q, want v0.21.0", m.LatestVersion)
+	}
+	if m.Published != "2023-10-11T17:42:28Z" {
+		t.Errorf("published = %q", m.Published)
+	}
+	if m.Host != "golang.org" {
+		t.Errorf("host = %q, want golang.org", m.Host)
+	}
+	if m.SourceURL != "https://go.googlesource.com/text" {
+		t.Errorf("source_url = %q", m.SourceURL)
+	}
+
+	// Verify JSON field names
+	if !strings.Contains(output, `"non_github_count"`) {
+		t.Error("JSON should use non_github_count field name")
+	}
+	if !strings.Contains(output, `"non_github_modules"`) {
+		t.Error("JSON should use non_github_modules field name")
+	}
+	if strings.Contains(output, `"skipped_non_github"`) {
+		t.Error("JSON should not use old skipped_non_github field name")
+	}
+	if strings.Contains(output, `"skipped_modules"`) {
+		t.Error("JSON should not use old skipped_modules field name")
 	}
 }

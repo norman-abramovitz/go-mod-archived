@@ -95,20 +95,34 @@ func formatDurationShort(archivedAt time.Time) string {
 	return strings.Join(parts, " ")
 }
 
-// PrintSkippedTable outputs a section listing skipped non-GitHub modules.
+// hostDomain extracts the hosting domain from a module path.
+func hostDomain(modulePath string) string {
+	parts := strings.SplitN(modulePath, "/", 2)
+	if len(parts) > 0 {
+		return parts[0]
+	}
+	return ""
+}
+
+// PrintSkippedTable outputs a section listing non-GitHub modules with enrichment data.
 func PrintSkippedTable(modules []Module) {
 	sort.Slice(modules, func(i, j int) bool {
 		return modules[i].Path < modules[j].Path
 	})
-	fmt.Fprintf(os.Stderr, "\nSKIPPED MODULES (%d non-GitHub %s)\n\n", len(modules), pluralize(len(modules), "module", "modules"))
+	fmt.Fprintf(os.Stderr, "\nNON-GITHUB MODULES (%d non-GitHub %s)\n\n", len(modules), pluralize(len(modules), "module", "modules"))
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT")
+	fmt.Fprintln(w, "MODULE\tVERSION\tLATEST\tDIRECT\tPUBLISHED\tSOURCE")
 	for _, m := range modules {
 		direct := "indirect"
 		if m.Direct {
 			direct = "direct"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\n", m.Path, m.Version, direct)
+		latest := m.LatestVersion
+		if latest != "" && latest == m.Version {
+			latest = "-"
+		}
+		published := fmtDate(m.VersionTime)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", m.Path, m.Version, latest, direct, published, m.SourceURL)
 	}
 	w.Flush()
 }
@@ -266,22 +280,26 @@ func pluralize(n int, singular, plural string) string {
 	return plural
 }
 
-// JSONSkippedModule represents a skipped non-GitHub module in JSON output.
+// JSONSkippedModule represents a non-GitHub module in JSON output.
 type JSONSkippedModule struct {
-	Module  string `json:"module"`
-	Version string `json:"version"`
-	Direct  bool   `json:"direct"`
+	Module        string `json:"module"`
+	Version       string `json:"version"`
+	Direct        bool   `json:"direct"`
+	LatestVersion string `json:"latest_version,omitempty"`
+	Published     string `json:"published,omitempty"`
+	Host          string `json:"host,omitempty"`
+	SourceURL     string `json:"source_url,omitempty"`
 }
 
 // JSONOutput is the structure for JSON output mode.
 type JSONOutput struct {
-	Archived       []JSONModule        `json:"archived"`
-	Deprecated     []JSONModule        `json:"deprecated,omitempty"`
-	NotFound       []JSONModule        `json:"not_found,omitempty"`
-	Active         []JSONModule        `json:"active,omitempty"`
-	SkippedNonGH   int                 `json:"skipped_non_github"`
-	SkippedModules []JSONSkippedModule `json:"skipped_modules,omitempty"`
-	TotalChecked   int                 `json:"total_checked"`
+	Archived        []JSONModule        `json:"archived"`
+	Deprecated      []JSONModule        `json:"deprecated,omitempty"`
+	NotFound        []JSONModule        `json:"not_found,omitempty"`
+	Active          []JSONModule        `json:"active,omitempty"`
+	NonGitHubCount  int                 `json:"non_github_count"`
+	NonGitHubModules []JSONSkippedModule `json:"non_github_modules,omitempty"`
+	TotalChecked    int                 `json:"total_checked"`
 }
 
 type JSONModule struct {
@@ -309,17 +327,28 @@ type JSONSourceFile struct {
 // deprecatedModules is optional; if provided, the first element is used.
 func buildJSONOutput(results []RepoStatus, nonGitHubModules []Module, showAll bool, fileMatches map[string][]FileMatch, deprecatedModules ...[]Module) JSONOutput {
 	out := JSONOutput{
-		SkippedNonGH: len(nonGitHubModules),
-		TotalChecked: len(results),
-		Archived:     []JSONModule{},
+		NonGitHubCount: len(nonGitHubModules),
+		TotalChecked:   len(results),
+		Archived:       []JSONModule{},
 	}
 
 	for _, m := range nonGitHubModules {
-		out.SkippedModules = append(out.SkippedModules, JSONSkippedModule{
+		jsm := JSONSkippedModule{
 			Module:  m.Path,
 			Version: m.Version,
 			Direct:  m.Direct,
-		})
+			Host:    hostDomain(m.Path),
+		}
+		if m.LatestVersion != "" {
+			jsm.LatestVersion = m.LatestVersion
+		}
+		if !m.VersionTime.IsZero() {
+			jsm.Published = m.VersionTime.Format("2006-01-02T15:04:05Z")
+		}
+		if m.SourceURL != "" {
+			jsm.SourceURL = m.SourceURL
+		}
+		out.NonGitHubModules = append(out.NonGitHubModules, jsm)
 	}
 
 	for _, r := range results {
@@ -621,11 +650,11 @@ func PrintTree(results []RepoStatus, graph map[string][]string, allModules []Mod
 
 // JSONTreeOutput is the structure for --tree --json output mode.
 type JSONTreeOutput struct {
-	Tree           []JSONTreeEntry     `json:"tree"`
-	Deprecated     []JSONModule        `json:"deprecated,omitempty"`
-	SkippedNonGH   int                 `json:"skipped_non_github"`
-	SkippedModules []JSONSkippedModule `json:"skipped_modules,omitempty"`
-	TotalChecked   int                 `json:"total_checked"`
+	Tree             []JSONTreeEntry     `json:"tree"`
+	Deprecated       []JSONModule        `json:"deprecated,omitempty"`
+	NonGitHubCount   int                 `json:"non_github_count"`
+	NonGitHubModules []JSONSkippedModule `json:"non_github_modules,omitempty"`
+	TotalChecked     int                 `json:"total_checked"`
 }
 
 // JSONTreeEntry represents a direct dependency in the JSON tree.
@@ -658,17 +687,28 @@ func buildTreeJSONOutput(results []RepoStatus, graph map[string][]string, allMod
 	entries, ctx := buildTree(results, graph, allModules)
 
 	out := JSONTreeOutput{
-		Tree:         []JSONTreeEntry{},
-		SkippedNonGH: len(nonGitHubModules),
-		TotalChecked: len(results),
+		Tree:           []JSONTreeEntry{},
+		NonGitHubCount: len(nonGitHubModules),
+		TotalChecked:   len(results),
 	}
 
 	for _, m := range nonGitHubModules {
-		out.SkippedModules = append(out.SkippedModules, JSONSkippedModule{
+		jsm := JSONSkippedModule{
 			Module:  m.Path,
 			Version: m.Version,
 			Direct:  m.Direct,
-		})
+			Host:    hostDomain(m.Path),
+		}
+		if m.LatestVersion != "" {
+			jsm.LatestVersion = m.LatestVersion
+		}
+		if !m.VersionTime.IsZero() {
+			jsm.Published = m.VersionTime.Format("2006-01-02T15:04:05Z")
+		}
+		if m.SourceURL != "" {
+			jsm.SourceURL = m.SourceURL
+		}
+		out.NonGitHubModules = append(out.NonGitHubModules, jsm)
 	}
 
 	// Add deprecated modules if provided.

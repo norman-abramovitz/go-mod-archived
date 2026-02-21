@@ -127,6 +127,11 @@ func main() {
 	// Filter to GitHub modules and deduplicate
 	githubModules, nonGitHubModules := FilterGitHub(allModules, *directOnly)
 
+	// Enrich non-GitHub modules with proxy data
+	if len(nonGitHubModules) > 0 {
+		EnrichNonGitHub(nonGitHubModules, 20)
+	}
+
 	if len(githubModules) == 0 {
 		fmt.Fprintf(os.Stderr, "No GitHub modules found in %s\n", gomodPath)
 		os.Exit(0)
