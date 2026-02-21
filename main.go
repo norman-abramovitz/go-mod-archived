@@ -23,6 +23,7 @@ func main() {
 	filesFlag := flag.Bool("files", false, "Show source files that import archived modules")
 	timeFlag := flag.Bool("time", false, "Include time in date output (2006-01-02 15:04:05 instead of 2006-01-02)")
 	recursiveFlag := flag.Bool("recursive", false, "Scan all go.mod files in the directory tree")
+	resolveFlag := flag.Bool("resolve", false, "Resolve vanity import paths (e.g. google.golang.org/grpc) to GitHub repos")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: go-mod-archived [flags] [path/to/go.mod | path/to/dir]\n\nDetect archived GitHub dependencies in a Go project.\n\nFlags:\n")
 		flag.PrintDefaults()
@@ -55,12 +56,13 @@ func main() {
 			rootDir = filepath.Dir(rootDir)
 		}
 		os.Exit(runRecursive(rootDir, runConfig{
-			jsonMode:   *jsonFlag,
-			showAll:    *allFlag,
-			directOnly: *directOnly,
-			workers:    *workers,
-			treeMode:   *treeFlag,
-			filesMode:  *filesFlag,
+			jsonMode:    *jsonFlag,
+			showAll:     *allFlag,
+			directOnly:  *directOnly,
+			workers:     *workers,
+			treeMode:    *treeFlag,
+			filesMode:   *filesFlag,
+			resolveMode: *resolveFlag,
 		}))
 	}
 
@@ -75,6 +77,14 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(2)
+	}
+
+	// Resolve vanity imports to GitHub repos
+	if *resolveFlag {
+		resolved := ResolveVanityImports(allModules, 20)
+		if resolved > 0 {
+			fmt.Fprintf(os.Stderr, "Resolved %d non-GitHub modules to GitHub repos.\n", resolved)
+		}
 	}
 
 	// Filter to GitHub modules and deduplicate

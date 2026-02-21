@@ -10,12 +10,13 @@ import (
 
 // runConfig holds parsed flag values for runRecursive.
 type runConfig struct {
-	jsonMode   bool
-	showAll    bool
-	directOnly bool
-	workers    int
-	treeMode   bool
-	filesMode  bool
+	jsonMode    bool
+	showAll     bool
+	directOnly  bool
+	workers     int
+	treeMode    bool
+	filesMode   bool
+	resolveMode bool
 }
 
 // findGoModFiles walks the directory tree rooted at dir and returns
@@ -96,11 +97,8 @@ func runRecursive(rootDir string, cfg runConfig) int {
 		return 2
 	}
 
-	// Parse all go.mod files
+	// Phase 1: Parse all go.mod files
 	var modules []moduleInfo
-	var allGitHub []Module
-	globalSeen := make(map[string]bool)
-
 	for _, gp := range gomodPaths {
 		allMods, err := ParseGoMod(gp)
 		if err != nil {
@@ -108,19 +106,31 @@ func runRecursive(rootDir string, cfg runConfig) int {
 			continue
 		}
 		modName, _ := ModuleName(gp)
-		ghMods, nonGH := FilterGitHub(allMods, cfg.directOnly)
-
 		rel, _ := filepath.Rel(rootDir, gp)
 		modules = append(modules, moduleInfo{
-			gomodPath:     gp,
-			relPath:       rel,
-			moduleName:    modName,
-			allModules:    allMods,
-			githubModules: ghMods,
-			nonGHCount:    nonGH,
+			gomodPath:  gp,
+			relPath:    rel,
+			moduleName: modName,
+			allModules: allMods,
 		})
+	}
 
-		// Collect globally unique GitHub modules for one API call
+	// Phase 2: Resolve vanity imports (before filtering)
+	if cfg.resolveMode {
+		resolved := resolveAcrossModules(modules)
+		if resolved > 0 {
+			fmt.Fprintf(os.Stderr, "Resolved %d non-GitHub modules to GitHub repos.\n", resolved)
+		}
+	}
+
+	// Phase 3: Filter to GitHub modules and collect globally unique repos
+	var allGitHub []Module
+	globalSeen := make(map[string]bool)
+	for i := range modules {
+		ghMods, nonGH := FilterGitHub(modules[i].allModules, cfg.directOnly)
+		modules[i].githubModules = ghMods
+		modules[i].nonGHCount = nonGH
+
 		for _, m := range ghMods {
 			key := m.Owner + "/" + m.Repo
 			if !globalSeen[key] {
