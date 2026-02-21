@@ -158,7 +158,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Warning: could not run go mod graph: %v\n", err)
 		} else {
 			if *jsonFlag {
-				PrintTreeJSON(results, graph, allModules, fileMatches, nonGitHubCount)
+				PrintTreeJSON(results, graph, allModules, fileMatches, nonGitHubCount, deprecatedModules)
 			} else {
 				PrintTree(results, graph, allModules, fileMatches)
 				if len(deprecatedModules) > 0 {

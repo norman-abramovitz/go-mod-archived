@@ -498,6 +498,7 @@ func PrintTree(results []RepoStatus, graph map[string][]string, allModules []Mod
 // JSONTreeOutput is the structure for --tree --json output mode.
 type JSONTreeOutput struct {
 	Tree         []JSONTreeEntry `json:"tree"`
+	Deprecated   []JSONModule    `json:"deprecated,omitempty"`
 	SkippedNonGH int             `json:"skipped_non_github"`
 	TotalChecked int             `json:"total_checked"`
 }
@@ -525,13 +526,28 @@ type JSONTreeArchivedDep struct {
 }
 
 // buildTreeJSONOutput creates the JSONTreeOutput data structure without writing it.
-func buildTreeJSONOutput(results []RepoStatus, graph map[string][]string, allModules []Module, fileMatches map[string][]FileMatch, nonGitHubCount int) JSONTreeOutput {
+// deprecatedModules is optional; if provided, the first element is used.
+func buildTreeJSONOutput(results []RepoStatus, graph map[string][]string, allModules []Module, fileMatches map[string][]FileMatch, nonGitHubCount int, deprecatedModules ...[]Module) JSONTreeOutput {
 	entries, ctx := buildTree(results, graph, allModules)
 
 	out := JSONTreeOutput{
 		Tree:         []JSONTreeEntry{},
 		SkippedNonGH: nonGitHubCount,
 		TotalChecked: len(results),
+	}
+
+	// Add deprecated modules if provided.
+	if len(deprecatedModules) > 0 && len(deprecatedModules[0]) > 0 {
+		for _, m := range deprecatedModules[0] {
+			out.Deprecated = append(out.Deprecated, JSONModule{
+				Module:            m.Path,
+				Version:           m.Version,
+				Direct:            m.Direct,
+				Owner:             m.Owner,
+				Repo:              m.Repo,
+				DeprecatedMessage: m.Deprecated,
+			})
+		}
 	}
 
 	if entries == nil {
@@ -605,8 +621,9 @@ func buildTreeJSONOutput(results []RepoStatus, graph map[string][]string, allMod
 }
 
 // PrintTreeJSON outputs the dependency tree as JSON.
-func PrintTreeJSON(results []RepoStatus, graph map[string][]string, allModules []Module, fileMatches map[string][]FileMatch, nonGitHubCount int) {
-	out := buildTreeJSONOutput(results, graph, allModules, fileMatches, nonGitHubCount)
+// deprecatedModules is optional; if provided, the first element is used.
+func PrintTreeJSON(results []RepoStatus, graph map[string][]string, allModules []Module, fileMatches map[string][]FileMatch, nonGitHubCount int, deprecatedModules ...[]Module) {
+	out := buildTreeJSONOutput(results, graph, allModules, fileMatches, nonGitHubCount, deprecatedModules...)
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	enc.Encode(out)
