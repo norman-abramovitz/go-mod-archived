@@ -40,6 +40,7 @@ If no path is given, looks for `go.mod` in the current directory. You can also p
 | `--direct-only` | Only check direct dependencies (skip indirect) |
 | `--tree` | Show dependency tree for archived modules (uses `go mod graph`) |
 | `--files` | Show source files that import archived modules (requires `rg`) |
+| `--recursive` | Scan all go.mod files in the directory tree |
 | `--time` | Include time in date output (2006-01-02 15:04:05 instead of 2006-01-02) |
 | `--workers N` | Repos per GitHub GraphQL batch request (default 50) |
 
@@ -198,6 +199,34 @@ $ go-mod-archived --tree --json
 ```
 
 Add `--files` to include `source_files` arrays on archived entries.
+
+### Recursive scanning
+
+For multi-module repos, `--recursive` discovers all `go.mod` files in the directory tree, queries GitHub once for all unique repos, and outputs per-module results:
+
+```
+$ go-mod-archived --recursive --direct-only /path/to/project
+Found 10 go.mod files, checking 90 unique GitHub repos...
+=== api/go.mod — github.com/myorg/myapp/api/v2 ===
+
+No archived dependencies found among 11 github.com modules.
+
+=== go.mod — github.com/myorg/myapp ===
+
+ARCHIVED DEPENDENCIES (5 of 83 github.com modules)
+
+MODULE                                     VERSION   DIRECT  ARCHIVED AT  LAST PUSHED
+github.com/mitchellh/copystructure         v1.2.0    direct  2024-07-22   2021-05-05
+github.com/mitchellh/reflectwalk           v1.0.2    direct  2024-07-22   2022-04-21
+...
+
+=== sdk/go.mod — github.com/myorg/myapp/sdk/v2 ===
+
+ARCHIVED DEPENDENCIES (3 of 34 github.com modules)
+...
+```
+
+Skips `vendor/`, `testdata/`, and hidden directories. Combines with all other flags (`--json`, `--tree`, `--files`, etc.).
 
 ## How it works
 
