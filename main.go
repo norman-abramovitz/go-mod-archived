@@ -12,31 +12,84 @@ import (
 )
 
 func main() {
-	// Extract --duration before reorderArgs and flag.Parse, since it
-	// supports optional values (--duration or --duration=DATE) which
-	// Go's flag package cannot handle.
+	// Extract --duration and --stale before reorderArgs and flag.Parse,
+	// since they support optional values which Go's flag package cannot handle.
 	extractDurationFlag()
+	extractStaleFlag()
 
 	// Reorder args so flags can appear after the positional argument.
 	// Go's flag package stops parsing at the first non-flag argument.
 	reorderArgs()
 
-	jsonFlag := flag.Bool("json", false, "Output as JSON")
-	allFlag := flag.Bool("all", false, "Show all modules, not just archived ones")
+	// Output format flags
+	formatFlag := flag.String("format", "table", "Output format: table, json, markdown, mermaid, quickfix")
+	jsonFlag := flag.Bool("json", false, "Output as JSON (alias for --format=json)")
+	markdownFlag := flag.Bool("markdown", false, "Output as GitHub-flavored Markdown (alias for --format=markdown)")
+	mermaidFlag := flag.Bool("mermaid", false, "Output Mermaid flowchart diagram (alias for --format=mermaid)")
+	quickfixFlag := flag.Bool("quickfix", false, "Output file:line:module for editor quickfix (alias for --format=quickfix)")
+
+	// Filtering flags
 	directOnly := flag.Bool("direct-only", false, "Only check direct dependencies")
-	workers := flag.Int("workers", 50, "Number of repos per GitHub GraphQL batch request")
-	treeFlag := flag.Bool("tree", false, "Show dependency tree for archived modules (uses go mod graph)")
-	filesFlag := flag.Bool("files", false, "Show source files that import archived modules")
-	timeFlag := flag.Bool("time", false, "Include time in date output (2006-01-02 15:04:05 instead of 2006-01-02)")
-	recursiveFlag := flag.Bool("recursive", false, "Scan all go.mod files in the directory tree")
+	ignoreFileFlag := flag.String("ignore-file", "", "Path to ignore file (default: .modrotignore next to go.mod)")
+	ignoreFlag := flag.String("ignore", "", "Comma-separated list of module paths to ignore")
+
+	// Analysis flags
 	resolveFlag := flag.Bool("resolve", false, "Resolve vanity import paths (e.g. google.golang.org/grpc) to GitHub repos")
 	deprecatedFlag := flag.Bool("deprecated", false, "Check for deprecated modules via the Go module proxy")
+
+	// Display flags
+	allFlag := flag.Bool("all", false, "Show all modules, not just archived ones")
+	treeFlag := flag.Bool("tree", false, "Show dependency tree for archived modules (uses go mod graph)")
+	filesFlag := flag.Bool("files", false, "Show source files that import archived modules")
+	sortFlag := flag.String("sort", "name", "Sort order for archived modules: name, duration, pushed")
+	timeFlag := flag.Bool("time", false, "Include time in date output (2006-01-02 15:04:05 instead of 2006-01-02)")
+
+	// Execution flags
+	workers := flag.Int("workers", 50, "Number of repos per GitHub GraphQL batch request")
 	goVersionFlag := flag.String("go-version", "", "Override the Go toolchain version from go.mod (e.g. 1.21.0)")
+	recursiveFlag := flag.Bool("recursive", false, "Scan all go.mod files in the directory tree")
+
+	// Info flags
 	versionFlag := flag.Bool("version", false, "Print version information and exit")
+
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: modrot [flags] [path/to/go.mod | path/to/dir]\n\nDetect archived GitHub dependencies in a Go project.\n\nFlags:\n")
-		flag.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "  -duration / --duration[=YYYY-MM-DD]\n    \tShow how long dependencies have been archived (default: today)\n")
+		fmt.Fprintf(os.Stderr, `Usage: modrot [flags] [path/to/go.mod | path/to/dir]
+
+Detect archived GitHub dependencies in a Go project.
+
+Output format:
+  --format string       Output format: table, json, markdown, mermaid, quickfix (default "table")
+  --json                Output as JSON (alias for --format=json)
+  --markdown            Output as GitHub-flavored Markdown (alias for --format=markdown)
+  --mermaid             Output Mermaid flowchart diagram (alias for --format=mermaid)
+  --quickfix            Output file:line:module for editor quickfix (alias for --format=quickfix)
+
+Filtering:
+  --direct-only         Only check direct dependencies
+  --ignore-file string  Path to ignore file (default: .modrotignore next to go.mod)
+  --ignore string       Comma-separated list of module paths to ignore
+  --stale[=THRESHOLD]   Show dependencies not pushed in >THRESHOLD (default: 2y, e.g. 1y6m, 180d)
+
+Analysis:
+  --resolve             Resolve vanity import paths to GitHub repos
+  --deprecated          Check for deprecated modules via the Go module proxy
+  --duration[=DATE]     Show how long dependencies have been archived (default: today)
+
+Display:
+  --all                 Show all modules, not just archived ones
+  --tree                Show dependency tree for archived modules (uses go mod graph)
+  --files               Show source files that import archived modules
+  --sort string         Sort order for archived modules: name, duration, pushed (default "name")
+  --time                Include time in date output
+
+Execution:
+  --workers int         Number of repos per GitHub GraphQL batch request (default 50)
+  --go-version string   Override the Go toolchain version from go.mod
+  --recursive           Scan all go.mod files in the directory tree
+
+Info:
+  --version             Print version information and exit
+`)
 	}
 	flag.Parse()
 
@@ -45,10 +98,36 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Resolve output format: aliases override --format default
+	outputFormat := *formatFlag
+	switch {
+	case *jsonFlag:
+		outputFormat = "json"
+	case *markdownFlag:
+		outputFormat = "markdown"
+	case *mermaidFlag:
+		outputFormat = "mermaid"
+	case *quickfixFlag:
+		outputFormat = "quickfix"
+	}
+
+	// Quickfix implies --files
+	if outputFormat == "quickfix" {
+		*filesFlag = true
+	}
+
+	// Mermaid implies --tree
+	if outputFormat == "mermaid" {
+		*treeFlag = true
+	}
+
 	// Set date format
 	if *timeFlag {
 		dateFmt = "2006-01-02 15:04:05"
 	}
+
+	// Set sort mode
+	sortMode = *sortFlag
 
 	// Determine input path
 	inputPath := "."
@@ -71,7 +150,7 @@ func main() {
 			rootDir = filepath.Dir(rootDir)
 		}
 		os.Exit(runRecursive(rootDir, runConfig{
-			jsonMode:       *jsonFlag,
+			outputFormat:   outputFormat,
 			showAll:        *allFlag,
 			directOnly:     *directOnly,
 			workers:        *workers,
@@ -83,6 +162,9 @@ func main() {
 			goToolchain:    goToolchainVersion(),
 			durationMode:   durationEnabled,
 			durationDate:   durationEndDate,
+			sortMode:       *sortFlag,
+			ignoreFile:     *ignoreFileFlag,
+			ignoreInline:   *ignoreFlag,
 		}))
 	}
 
@@ -146,8 +228,32 @@ func main() {
 		os.Exit(2)
 	}
 
-	// Enrich results with direct/indirect info from all modules (not just deduplicated)
-	// The deduplicated set loses some info, but we kept Direct from the first occurrence.
+	// Apply ignore list
+	ignoreList := NewIgnoreList()
+	ignoreFilePath := *ignoreFileFlag
+	if ignoreFilePath == "" {
+		ignoreFilePath = filepath.Join(filepath.Dir(gomodPath), ".modrotignore")
+	}
+	if il, err := LoadIgnoreFile(ignoreFilePath); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not read ignore file: %v\n", err)
+	} else {
+		for p := range il.paths {
+			ignoreList.Add(p)
+		}
+	}
+	if *ignoreFlag != "" {
+		inline := ParseIgnoreList(*ignoreFlag)
+		for p := range inline.paths {
+			ignoreList.Add(p)
+		}
+	}
+	if ignoreList.Len() > 0 {
+		var ignored []RepoStatus
+		results, ignored = ignoreList.FilterResults(results)
+		if len(ignored) > 0 {
+			fmt.Fprintf(os.Stderr, "Ignored %d %s.\n", len(ignored), pluralize(len(ignored), "module", "modules"))
+		}
+	}
 
 	// Check if any archived
 	hasArchived := false
@@ -183,16 +289,36 @@ func main() {
 		}
 	}
 
+	// Filter stale modules (non-archived repos with old push dates)
+	stale := filterStale(results)
+
 	// Handle --tree mode
 	if *treeFlag && hasArchived {
 		graph, err := parseModGraph(filepath.Dir(gomodPath), *goVersionFlag)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not run go mod graph: %v\n", err)
 		} else {
-			if *jsonFlag {
+			switch outputFormat {
+			case "mermaid":
+				PrintMermaid(results, graph, allModules)
+			case "json":
 				PrintTreeJSON(results, graph, allModules, fileMatches, nonGitHubModules, deprecatedModules)
-			} else {
+			case "markdown":
+				PrintMarkdownTree(results, graph, allModules, fileMatches)
+				if len(stale) > 0 {
+					PrintMarkdownStale(stale)
+				}
+				if len(deprecatedModules) > 0 {
+					PrintMarkdown(nil, nil, false, deprecatedModules)
+				}
+				if len(nonGitHubModules) > 0 {
+					PrintMarkdownSkipped(nonGitHubModules)
+				}
+			default:
 				PrintTree(results, graph, allModules, fileMatches)
+				if len(stale) > 0 {
+					PrintStaleTable(stale)
+				}
 				if len(deprecatedModules) > 0 {
 					PrintDeprecatedTable(deprecatedModules)
 				}
@@ -208,12 +334,28 @@ func main() {
 	}
 
 	// Output
-	if *jsonFlag {
-		PrintJSON(results, nonGitHubModules, *allFlag, fileMatches, deprecatedModules)
-	} else {
+	switch outputFormat {
+	case "quickfix":
+		if fileMatches != nil {
+			PrintFilesPlain(results, fileMatches)
+		}
+	case "json":
+		PrintJSON(results, nonGitHubModules, *allFlag, fileMatches, stale, deprecatedModules)
+	case "markdown":
+		PrintMarkdown(results, nonGitHubModules, *allFlag, deprecatedModules)
+		if fileMatches != nil {
+			PrintMarkdownFiles(results, fileMatches)
+		}
+		if len(stale) > 0 {
+			PrintMarkdownStale(stale)
+		}
+	default:
 		PrintTable(results, nonGitHubModules, *allFlag, deprecatedModules)
 		if fileMatches != nil {
 			PrintFiles(results, fileMatches)
+		}
+		if len(stale) > 0 {
+			PrintStaleTable(stale)
 		}
 	}
 
@@ -226,6 +368,10 @@ func main() {
 var valueFlagNames = map[string]bool{
 	"-workers": true, "--workers": true,
 	"-go-version": true, "--go-version": true,
+	"-sort": true, "--sort": true,
+	"-ignore-file": true, "--ignore-file": true,
+	"-ignore": true, "--ignore": true,
+	"-format": true, "--format": true,
 }
 
 // reorderArgs moves flags after positional arguments to before them,
@@ -296,6 +442,42 @@ func extractDurationFlag() {
 				os.Exit(2)
 			}
 			durationEndDate = t
+		default:
+			filtered = append(filtered, arg)
+		}
+	}
+	os.Args = filtered
+}
+
+// extractStaleFlag scans os.Args for --stale or -stale, which supports
+// an optional threshold value (--stale or --stale=1y6m). Default threshold
+// is 2y. Also auto-enables durationEnabled when --stale is used.
+func extractStaleFlag() {
+	var filtered []string
+	for _, arg := range os.Args {
+		switch {
+		case arg == "--stale" || arg == "-stale":
+			staleEnabled = true
+			staleYears = 2
+			durationEnabled = true
+			if durationEndDate.IsZero() {
+				durationEndDate = time.Now()
+			}
+		case strings.HasPrefix(arg, "--stale=") || strings.HasPrefix(arg, "-stale="):
+			staleEnabled = true
+			threshStr := arg[strings.Index(arg, "=")+1:]
+			y, m, d, err := parseThreshold(threshStr)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: invalid stale threshold %q (expected e.g. 2y, 1y6m, 180d)\n", threshStr)
+				os.Exit(2)
+			}
+			staleYears = y
+			staleMonths = m
+			staleDays = d
+			durationEnabled = true
+			if durationEndDate.IsZero() {
+				durationEndDate = time.Now()
+			}
 		default:
 			filtered = append(filtered, arg)
 		}

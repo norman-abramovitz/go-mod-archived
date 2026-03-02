@@ -11,7 +11,7 @@ import (
 
 // runConfig holds parsed flag values for runRecursive.
 type runConfig struct {
-	jsonMode       bool
+	outputFormat   string // "table", "json", "markdown", "mermaid", "quickfix"
 	showAll        bool
 	directOnly     bool
 	workers        int
@@ -23,6 +23,9 @@ type runConfig struct {
 	goToolchain    string // e.g. "go1.23.4" from `go version`
 	durationMode   bool
 	durationDate   time.Time
+	sortMode       string // "name", "duration", or "pushed"
+	ignoreFile     string
+	ignoreInline   string
 }
 
 // findGoModFiles walks the directory tree rooted at dir and returns
@@ -203,9 +206,14 @@ func runRecursive(rootDir string, cfg runConfig) int {
 
 	hasAnyArchived := false
 
-	if cfg.jsonMode {
+	switch cfg.outputFormat {
+	case "quickfix":
+		hasAnyArchived = runRecursiveQuickfix(modules, statusMap, cfg)
+	case "json":
 		hasAnyArchived = runRecursiveJSON(modules, statusMap, cfg)
-	} else {
+	case "markdown":
+		hasAnyArchived = runRecursiveMarkdown(modules, statusMap, cfg)
+	default:
 		hasAnyArchived = runRecursiveText(modules, statusMap, cfg)
 	}
 
@@ -213,6 +221,33 @@ func runRecursive(rootDir string, cfg runConfig) int {
 		return 1
 	}
 	return 0
+}
+
+// runRecursiveQuickfix outputs quickfix-format lines across all modules.
+func runRecursiveQuickfix(modules []moduleInfo, statusMap map[string]RepoStatus, cfg runConfig) bool {
+	hasAnyArchived := false
+
+	for _, mi := range modules {
+		results := applyStatus(mi.githubModules, statusMap)
+
+		il := BuildIgnoreList(filepath.Dir(mi.gomodPath), cfg.ignoreFile, cfg.ignoreInline)
+		if il.Len() > 0 {
+			results, _ = il.FilterResults(results)
+		}
+
+		archivedPaths := getArchivedPaths(results)
+		if len(archivedPaths) > 0 {
+			hasAnyArchived = true
+			fm, err := ScanImports(filepath.Dir(mi.gomodPath), archivedPaths)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not scan imports for %s: %v\n", mi.relPath, err)
+				continue
+			}
+			PrintFilesPlain(results, fm)
+		}
+	}
+
+	return hasAnyArchived
 }
 
 // runRecursiveJSON outputs recursive results as a single JSON document.
@@ -224,6 +259,13 @@ func runRecursiveJSON(modules []moduleInfo, statusMap map[string]RepoStatus, cfg
 
 		for _, mi := range modules {
 			results := applyStatus(mi.githubModules, statusMap)
+
+			// Apply ignore list
+			il := BuildIgnoreList(filepath.Dir(mi.gomodPath), cfg.ignoreFile, cfg.ignoreInline)
+			if il.Len() > 0 {
+				results, _ = il.FilterResults(results)
+			}
+
 			archivedPaths := getArchivedPaths(results)
 			if len(archivedPaths) > 0 {
 				hasAnyArchived = true
@@ -263,6 +305,13 @@ func runRecursiveJSON(modules []moduleInfo, statusMap map[string]RepoStatus, cfg
 
 		for _, mi := range modules {
 			results := applyStatus(mi.githubModules, statusMap)
+
+			// Apply ignore list
+			il := BuildIgnoreList(filepath.Dir(mi.gomodPath), cfg.ignoreFile, cfg.ignoreInline)
+			if il.Len() > 0 {
+				results, _ = il.FilterResults(results)
+			}
+
 			archivedPaths := getArchivedPaths(results)
 			if len(archivedPaths) > 0 {
 				hasAnyArchived = true
@@ -279,7 +328,8 @@ func runRecursiveJSON(modules []moduleInfo, statusMap map[string]RepoStatus, cfg
 			}
 
 			deprecatedModules := getDeprecatedModules(mi.allModules, cfg.directOnly, cfg.deprecatedMode)
-			jsonOut := buildJSONOutput(results, mi.nonGHModules, cfg.showAll, fileMatches, deprecatedModules)
+			stale := filterStale(results)
+			jsonOut := buildJSONOutput(results, mi.nonGHModules, cfg.showAll, fileMatches, stale, deprecatedModules)
 			out.Modules = append(out.Modules, RecursiveJSONEntry{
 				GoMod:      mi.relPath,
 				ModulePath: mi.moduleName,
@@ -296,12 +346,100 @@ func runRecursiveJSON(modules []moduleInfo, statusMap map[string]RepoStatus, cfg
 	return hasAnyArchived
 }
 
+// runRecursiveMarkdown outputs recursive results as Markdown with per-module headers.
+func runRecursiveMarkdown(modules []moduleInfo, statusMap map[string]RepoStatus, cfg runConfig) bool {
+	hasAnyArchived := false
+
+	for i, mi := range modules {
+		results := applyStatus(mi.githubModules, statusMap)
+
+		// Apply ignore list
+		il := BuildIgnoreList(filepath.Dir(mi.gomodPath), cfg.ignoreFile, cfg.ignoreInline)
+		if il.Len() > 0 {
+			var ignored []RepoStatus
+			results, ignored = il.FilterResults(results)
+			if len(ignored) > 0 {
+				fmt.Fprintf(os.Stderr, "Ignored %d %s.\n", len(ignored), pluralize(len(ignored), "module", "modules"))
+			}
+		}
+
+		archivedPaths := getArchivedPaths(results)
+		hasArchived := len(archivedPaths) > 0
+		if hasArchived {
+			hasAnyArchived = true
+		}
+
+		if i > 0 {
+			fmt.Fprintln(os.Stdout)
+		}
+		fmt.Fprintf(os.Stdout, "# %s — %s (%s)\n\n", mi.relPath, mi.moduleName, cfg.goToolchain)
+
+		if len(mi.githubModules) == 0 {
+			fmt.Fprintf(os.Stdout, "No GitHub modules found.\n")
+			continue
+		}
+
+		var fileMatches map[string][]FileMatch
+		if cfg.filesMode && hasArchived {
+			fm, err := ScanImports(filepath.Dir(mi.gomodPath), archivedPaths)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not scan imports: %v\n", err)
+			} else {
+				fileMatches = fm
+			}
+		}
+
+		deprecatedModules := getDeprecatedModules(mi.allModules, cfg.directOnly, cfg.deprecatedMode)
+		stale := filterStale(results)
+
+		if cfg.treeMode && hasArchived {
+			graph, err := parseModGraph(filepath.Dir(mi.gomodPath), cfg.goVersion)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not run go mod graph: %v\n", err)
+			} else {
+				PrintMarkdownTree(results, graph, mi.allModules, fileMatches)
+				if len(stale) > 0 {
+					PrintMarkdownStale(stale)
+				}
+				if len(deprecatedModules) > 0 {
+					PrintMarkdown(nil, nil, false, deprecatedModules)
+				}
+				if len(mi.nonGHModules) > 0 {
+					PrintMarkdownSkipped(mi.nonGHModules)
+				}
+				continue
+			}
+		}
+
+		PrintMarkdown(results, mi.nonGHModules, cfg.showAll, deprecatedModules)
+		if fileMatches != nil {
+			PrintMarkdownFiles(results, fileMatches)
+		}
+		if len(stale) > 0 {
+			PrintMarkdownStale(stale)
+		}
+	}
+
+	return hasAnyArchived
+}
+
 // runRecursiveText outputs recursive results as text with per-module headers.
 func runRecursiveText(modules []moduleInfo, statusMap map[string]RepoStatus, cfg runConfig) bool {
 	hasAnyArchived := false
 
 	for i, mi := range modules {
 		results := applyStatus(mi.githubModules, statusMap)
+
+		// Apply ignore list
+		il := BuildIgnoreList(filepath.Dir(mi.gomodPath), cfg.ignoreFile, cfg.ignoreInline)
+		if il.Len() > 0 {
+			var ignored []RepoStatus
+			results, ignored = il.FilterResults(results)
+			if len(ignored) > 0 {
+				fmt.Fprintf(os.Stderr, "Ignored %d %s.\n", len(ignored), pluralize(len(ignored), "module", "modules"))
+			}
+		}
+
 		archivedPaths := getArchivedPaths(results)
 		hasArchived := len(archivedPaths) > 0
 		if hasArchived {
@@ -329,18 +467,26 @@ func runRecursiveText(modules []moduleInfo, statusMap map[string]RepoStatus, cfg
 		}
 
 		deprecatedModules := getDeprecatedModules(mi.allModules, cfg.directOnly, cfg.deprecatedMode)
+		stale := filterStale(results)
 
 		if cfg.treeMode && hasArchived {
 			graph, err := parseModGraph(filepath.Dir(mi.gomodPath), cfg.goVersion)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: could not run go mod graph: %v\n", err)
 			} else {
-				PrintTree(results, graph, mi.allModules, fileMatches)
-				if len(deprecatedModules) > 0 {
-					PrintDeprecatedTable(deprecatedModules)
-				}
-				if len(mi.nonGHModules) > 0 {
-					PrintSkippedTable(mi.nonGHModules)
+				if cfg.outputFormat == "mermaid" {
+					PrintMermaid(results, graph, mi.allModules)
+				} else {
+					PrintTree(results, graph, mi.allModules, fileMatches)
+					if len(stale) > 0 {
+						PrintStaleTable(stale)
+					}
+					if len(deprecatedModules) > 0 {
+						PrintDeprecatedTable(deprecatedModules)
+					}
+					if len(mi.nonGHModules) > 0 {
+						PrintSkippedTable(mi.nonGHModules)
+					}
 				}
 				continue
 			}
@@ -349,6 +495,9 @@ func runRecursiveText(modules []moduleInfo, statusMap map[string]RepoStatus, cfg
 		PrintTable(results, mi.nonGHModules, cfg.showAll, deprecatedModules)
 		if fileMatches != nil {
 			PrintFiles(results, fileMatches)
+		}
+		if len(stale) > 0 {
+			PrintStaleTable(stale)
 		}
 	}
 

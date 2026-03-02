@@ -18,7 +18,7 @@ func TestStripVersion(t *testing.T) {
 		{"github.com/foo/bar@v1.2.3", "github.com/foo/bar"},
 		{"github.com/foo/bar/v2@v2.0.0", "github.com/foo/bar/v2"},
 		{"github.com/foo/bar@v0.0.0-20210821155943-2d9075ca8770", "github.com/foo/bar"},
-		{"github.com/foo/bar", "github.com/foo/bar"},         // no version
+		{"github.com/foo/bar", "github.com/foo/bar"}, // no version
 		{"cel.dev/expr@v0.25.1", "cel.dev/expr"},
 		{"", ""},
 	}
@@ -49,11 +49,11 @@ func TestAllSeen(t *testing.T) {
 
 func TestFindArchivedTransitive(t *testing.T) {
 	graph := map[string][]string{
-		"root":                         {"github.com/a/b@v1.0.0", "github.com/c/d@v1.0.0"},
-		"github.com/a/b@v1.0.0":       {"github.com/x/y@v1.0.0"},
-		"github.com/c/d@v1.0.0":       {"github.com/x/y@v1.0.0", "github.com/e/f@v1.0.0"},
-		"github.com/x/y@v1.0.0":       {},
-		"github.com/e/f@v1.0.0":       {},
+		"root":                  {"github.com/a/b@v1.0.0", "github.com/c/d@v1.0.0"},
+		"github.com/a/b@v1.0.0": {"github.com/x/y@v1.0.0"},
+		"github.com/c/d@v1.0.0": {"github.com/x/y@v1.0.0", "github.com/e/f@v1.0.0"},
+		"github.com/x/y@v1.0.0": {},
+		"github.com/e/f@v1.0.0": {},
 	}
 
 	archivedPaths := map[string]bool{
@@ -234,7 +234,7 @@ func TestPrintJSON_ArchivedOnly(t *testing.T) {
 	}
 
 	output := captureStdout(t, func() {
-		PrintJSON(results, skippedModules, false, nil)
+		PrintJSON(results, skippedModules, false, nil, nil)
 	})
 
 	var out JSONOutput
@@ -284,7 +284,7 @@ func TestPrintJSON_ShowAll(t *testing.T) {
 	}
 
 	output := captureStdout(t, func() {
-		PrintJSON(results, nil, true, nil)
+		PrintJSON(results, nil, true, nil, nil)
 	})
 
 	var out JSONOutput
@@ -307,7 +307,7 @@ func TestPrintJSON_NotFound(t *testing.T) {
 	}
 
 	output := captureStdout(t, func() {
-		PrintJSON(results, nil, false, nil)
+		PrintJSON(results, nil, false, nil, nil)
 	})
 
 	var out JSONOutput
@@ -325,7 +325,7 @@ func TestPrintJSON_NotFound(t *testing.T) {
 
 func TestPrintJSON_EmptyArchived(t *testing.T) {
 	output := captureStdout(t, func() {
-		PrintJSON(nil, nil, false, nil)
+		PrintJSON(nil, nil, false, nil, nil)
 	})
 
 	var out JSONOutput
@@ -466,9 +466,9 @@ func TestPrintTree_BasicTree(t *testing.T) {
 	}
 
 	graph := map[string][]string{
-		"mymodule":                   {"github.com/a/b@v1.0.0"},
-		"github.com/a/b@v1.0.0":     {"github.com/x/y@v0.1.0"},
-		"github.com/x/y@v0.1.0":     {},
+		"mymodule":              {"github.com/a/b@v1.0.0"},
+		"github.com/a/b@v1.0.0": {"github.com/x/y@v0.1.0"},
+		"github.com/x/y@v0.1.0": {},
 	}
 
 	output := captureStdout(t, func() {
@@ -504,7 +504,7 @@ func TestPrintTree_DirectArchived(t *testing.T) {
 	}
 
 	graph := map[string][]string{
-		"mymodule":               {"github.com/a/b@v1.0.0"},
+		"mymodule":              {"github.com/a/b@v1.0.0"},
 		"github.com/a/b@v1.0.0": {},
 	}
 
@@ -530,7 +530,7 @@ func TestPrintTree_NoArchived(t *testing.T) {
 	}
 
 	graph := map[string][]string{
-		"mymodule":               {"github.com/a/b@v1.0.0"},
+		"mymodule":              {"github.com/a/b@v1.0.0"},
 		"github.com/a/b@v1.0.0": {},
 	}
 
@@ -664,7 +664,7 @@ func TestPrintJSON_WithSourceFiles(t *testing.T) {
 	}
 
 	output := captureStdout(t, func() {
-		PrintJSON(results, nil, false, fileMatches)
+		PrintJSON(results, nil, false, fileMatches, nil)
 	})
 
 	var out JSONOutput
@@ -699,7 +699,7 @@ func TestPrintJSON_NoSourceFilesWhenNil(t *testing.T) {
 	}
 
 	output := captureStdout(t, func() {
-		PrintJSON(results, nil, false, nil)
+		PrintJSON(results, nil, false, nil, nil)
 	})
 
 	if strings.Contains(output, "source_files") {
@@ -721,7 +721,7 @@ func TestPrintTree_WithFileCount(t *testing.T) {
 	}
 
 	graph := map[string][]string{
-		"mymodule":               {"github.com/a/b@v1.0.0"},
+		"mymodule":              {"github.com/a/b@v1.0.0"},
 		"github.com/a/b@v1.0.0": {},
 	}
 
@@ -756,7 +756,7 @@ func TestBuildTree_BasicEntries(t *testing.T) {
 	}
 
 	graph := map[string][]string{
-		"mymodule":               {"github.com/a/b@v1.0.0"},
+		"mymodule":              {"github.com/a/b@v1.0.0"},
 		"github.com/a/b@v1.0.0": {"github.com/x/y@v0.1.0"},
 		"github.com/x/y@v0.1.0": {},
 	}
@@ -788,7 +788,7 @@ func TestBuildTree_NoArchived(t *testing.T) {
 		{Path: "github.com/a/b", Owner: "a", Repo: "b"},
 	}
 	graph := map[string][]string{
-		"mymodule":               {"github.com/a/b@v1.0.0"},
+		"mymodule":              {"github.com/a/b@v1.0.0"},
 		"github.com/a/b@v1.0.0": {},
 	}
 
@@ -834,7 +834,7 @@ func TestPrintTreeJSON_Basic(t *testing.T) {
 	}
 
 	graph := map[string][]string{
-		"mymodule":               {"github.com/a/b@v1.0.0"},
+		"mymodule":              {"github.com/a/b@v1.0.0"},
 		"github.com/a/b@v1.0.0": {"github.com/x/y@v0.1.0"},
 		"github.com/x/y@v0.1.0": {},
 	}
@@ -907,7 +907,7 @@ func TestPrintTreeJSON_DirectArchived(t *testing.T) {
 	}
 
 	graph := map[string][]string{
-		"mymodule":               {"github.com/a/b@v1.0.0"},
+		"mymodule":              {"github.com/a/b@v1.0.0"},
 		"github.com/a/b@v1.0.0": {},
 	}
 
@@ -946,7 +946,7 @@ func TestPrintTreeJSON_WithSourceFiles(t *testing.T) {
 	}
 
 	graph := map[string][]string{
-		"mymodule":               {"github.com/a/b@v1.0.0"},
+		"mymodule":              {"github.com/a/b@v1.0.0"},
 		"github.com/a/b@v1.0.0": {"github.com/x/y@v0.1.0"},
 	}
 
@@ -985,7 +985,7 @@ func TestPrintTreeJSON_NoArchived(t *testing.T) {
 		{Path: "github.com/a/b", Owner: "a", Repo: "b"},
 	}
 	graph := map[string][]string{
-		"mymodule":               {"github.com/a/b@v1.0.0"},
+		"mymodule":              {"github.com/a/b@v1.0.0"},
 		"github.com/a/b@v1.0.0": {},
 	}
 
@@ -1086,32 +1086,32 @@ func TestFormatDuration(t *testing.T) {
 		{
 			name:       "years months days",
 			archivedAt: time.Date(2022, 3, 15, 0, 0, 0, 0, time.UTC),
-			want:       "3 years, 11 months, 7 days",
+			want:       "3y11m7d",
 		},
 		{
 			name:       "years and one day (inclusive)",
 			archivedAt: time.Date(2024, 2, 21, 0, 0, 0, 0, time.UTC),
-			want:       "2 years, 1 day",
+			want:       "2y1d",
 		},
 		{
 			name:       "only days",
 			archivedAt: time.Date(2026, 2, 20, 0, 0, 0, 0, time.UTC),
-			want:       "2 days",
+			want:       "2d",
 		},
 		{
-			name:       "one year and one day singular",
+			name:       "one year and one day",
 			archivedAt: time.Date(2025, 2, 21, 0, 0, 0, 0, time.UTC),
-			want:       "1 year, 1 day",
+			want:       "1y1d",
 		},
 		{
-			name:       "one month singular",
+			name:       "one month and one day",
 			archivedAt: time.Date(2026, 1, 21, 0, 0, 0, 0, time.UTC),
-			want:       "1 month, 1 day",
+			want:       "1m1d",
 		},
 		{
 			name:       "same day",
 			archivedAt: time.Date(2026, 2, 21, 0, 0, 0, 0, time.UTC),
-			want:       "1 day",
+			want:       "1d",
 		},
 		{
 			name:       "zero time returns empty",
@@ -1149,12 +1149,12 @@ func TestFormatDurationShort(t *testing.T) {
 		{
 			name:       "years months days",
 			archivedAt: time.Date(2022, 3, 15, 0, 0, 0, 0, time.UTC),
-			want:       "3y 11m 7d",
+			want:       "3y11m7d",
 		},
 		{
 			name:       "years and one day",
 			archivedAt: time.Date(2024, 2, 21, 0, 0, 0, 0, time.UTC),
-			want:       "2y 1d",
+			want:       "2y1d",
 		},
 		{
 			name:       "only days",
@@ -1221,7 +1221,7 @@ func TestPrintTable_WithDuration(t *testing.T) {
 	if !strings.Contains(output, "DURATION") {
 		t.Error("table should contain DURATION header when enabled")
 	}
-	if !strings.Contains(output, "1 year, 7 months") {
+	if !strings.Contains(output, "1y7m") {
 		t.Errorf("table should contain duration value, got:\n%s", output)
 	}
 }
@@ -1269,7 +1269,7 @@ func TestPrintJSON_WithDuration(t *testing.T) {
 	}
 
 	output := captureStdout(t, func() {
-		PrintJSON(results, nil, false, nil)
+		PrintJSON(results, nil, false, nil, nil)
 	})
 
 	var out JSONOutput
@@ -1280,8 +1280,8 @@ func TestPrintJSON_WithDuration(t *testing.T) {
 	if out.Archived[0].ArchivedDuration == "" {
 		t.Error("expected archived_duration to be set")
 	}
-	if !strings.Contains(out.Archived[0].ArchivedDuration, "1 year") {
-		t.Errorf("duration = %q, expected to contain '1 year'", out.Archived[0].ArchivedDuration)
+	if !strings.Contains(out.Archived[0].ArchivedDuration, "1y") {
+		t.Errorf("duration = %q, expected to contain '1y'", out.Archived[0].ArchivedDuration)
 	}
 }
 
@@ -1302,8 +1302,8 @@ func TestFormatArchivedLine_WithDuration(t *testing.T) {
 	}
 
 	got := formatArchivedLine("github.com/foo/bar", "v1.0.0", rs)
-	if !strings.Contains(got, "1y 7m") {
-		t.Errorf("expected short duration in archived line, got %q", got)
+	if !strings.Contains(got, "1y7m") {
+		t.Errorf("expected compact duration in archived line, got %q", got)
 	}
 	if !strings.Contains(got, "last pushed") {
 		t.Errorf("expected last pushed still present, got %q", got)
@@ -1482,7 +1482,7 @@ func TestBuildTreeJSONOutput_WithDeprecated(t *testing.T) {
 	}
 
 	graph := map[string][]string{
-		"mymodule":               {"github.com/a/b@v1.0.0"},
+		"mymodule":              {"github.com/a/b@v1.0.0"},
 		"github.com/a/b@v1.0.0": {"github.com/x/y@v0.1.0"},
 	}
 
@@ -1517,7 +1517,7 @@ func TestPrintJSON_WithDeprecated(t *testing.T) {
 	}
 
 	output := captureStdout(t, func() {
-		PrintJSON(results, nil, false, nil, deprecatedModules)
+		PrintJSON(results, nil, false, nil, nil, deprecatedModules)
 	})
 
 	var out JSONOutput
@@ -1557,7 +1557,7 @@ func TestPrintJSON_NonGitHubModules(t *testing.T) {
 	}
 
 	output := captureStdout(t, func() {
-		PrintJSON(results, nonGitHubModules, false, nil)
+		PrintJSON(results, nonGitHubModules, false, nil, nil)
 	})
 
 	var out JSONOutput
@@ -1598,5 +1598,353 @@ func TestPrintJSON_NonGitHubModules(t *testing.T) {
 	}
 	if strings.Contains(output, `"skipped_modules"`) {
 		t.Error("JSON should not use old skipped_modules field name")
+	}
+}
+
+func TestPrintFilesPlain(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/foo/bar", Version: "v1.0.0", Owner: "foo", Repo: "bar"},
+			IsArchived: true,
+		},
+		{
+			Module:     Module{Path: "github.com/baz/qux", Version: "v2.0.0", Owner: "baz", Repo: "qux"},
+			IsArchived: true,
+		},
+	}
+
+	fileMatches := map[string][]FileMatch{
+		"github.com/foo/bar": {
+			{File: "audit/hash.go", Line: 14, ImportPath: "github.com/foo/bar"},
+			{File: "vault/policy.go", Line: 17, ImportPath: "github.com/foo/bar"},
+		},
+		"github.com/baz/qux": {
+			{File: "cmd/main.go", Line: 5, ImportPath: "github.com/baz/qux"},
+		},
+	}
+
+	output := captureStdout(t, func() {
+		PrintFilesPlain(results, fileMatches)
+	})
+
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 lines, got %d:\n%s", len(lines), output)
+	}
+	// Sorted by module path: baz/qux first, then foo/bar
+	if lines[0] != "cmd/main.go:5:github.com/baz/qux" {
+		t.Errorf("line 0 = %q", lines[0])
+	}
+	if lines[1] != "audit/hash.go:14:github.com/foo/bar" {
+		t.Errorf("line 1 = %q", lines[1])
+	}
+	if lines[2] != "vault/policy.go:17:github.com/foo/bar" {
+		t.Errorf("line 2 = %q", lines[2])
+	}
+}
+
+func TestParseThreshold(t *testing.T) {
+	tests := []struct {
+		input   string
+		y, m, d int
+		wantErr bool
+	}{
+		{"2y", 2, 0, 0, false},
+		{"1y6m", 1, 6, 0, false},
+		{"180d", 0, 0, 180, false},
+		{"1y6m15d", 1, 6, 15, false},
+		{"3m", 0, 3, 0, false},
+		{"", 0, 0, 0, true},
+		{"abc", 0, 0, 0, true},
+		{"2x", 0, 0, 0, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			y, m, d, err := parseThreshold(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("expected error for %q", tt.input)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if y != tt.y || m != tt.m || d != tt.d {
+				t.Errorf("parseThreshold(%q) = (%d, %d, %d), want (%d, %d, %d)",
+					tt.input, y, m, d, tt.y, tt.m, tt.d)
+			}
+		})
+	}
+}
+
+func TestExceedsThreshold(t *testing.T) {
+	// Pushed 3 years ago should exceed 2y threshold
+	old := time.Now().AddDate(-3, 0, 0)
+	if !exceedsThreshold(old, 2, 0, 0) {
+		t.Error("3y old should exceed 2y threshold")
+	}
+
+	// Pushed 1 year ago should NOT exceed 2y threshold
+	recent := time.Now().AddDate(-1, 0, 0)
+	if exceedsThreshold(recent, 2, 0, 0) {
+		t.Error("1y old should not exceed 2y threshold")
+	}
+
+	// Zero time should return false
+	if exceedsThreshold(time.Time{}, 2, 0, 0) {
+		t.Error("zero time should not exceed threshold")
+	}
+}
+
+func TestFilterStale(t *testing.T) {
+	savedStale := staleEnabled
+	savedY := staleYears
+	savedM := staleMonths
+	savedD := staleDays
+	defer func() {
+		staleEnabled = savedStale
+		staleYears = savedY
+		staleMonths = savedM
+		staleDays = savedD
+	}()
+
+	staleEnabled = true
+	staleYears = 2
+	staleMonths = 0
+	staleDays = 0
+
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/foo/bar", Version: "v1.0.0", Owner: "foo", Repo: "bar"},
+			IsArchived: false,
+			PushedAt:   time.Now().AddDate(-3, 0, 0), // 3 years ago → stale
+		},
+		{
+			Module:     Module{Path: "github.com/baz/qux", Version: "v2.0.0", Owner: "baz", Repo: "qux"},
+			IsArchived: false,
+			PushedAt:   time.Now().AddDate(0, -6, 0), // 6 months ago → not stale
+		},
+		{
+			Module:     Module{Path: "github.com/old/archived", Version: "v0.1.0", Owner: "old", Repo: "archived"},
+			IsArchived: true,
+			PushedAt:   time.Now().AddDate(-5, 0, 0), // archived → should NOT appear in stale
+		},
+	}
+
+	stale := filterStale(results)
+	if len(stale) != 1 {
+		t.Fatalf("expected 1 stale, got %d", len(stale))
+	}
+	if stale[0].Module.Path != "github.com/foo/bar" {
+		t.Errorf("stale[0] = %q, want github.com/foo/bar", stale[0].Module.Path)
+	}
+}
+
+func TestFilterStale_Disabled(t *testing.T) {
+	savedStale := staleEnabled
+	defer func() { staleEnabled = savedStale }()
+
+	staleEnabled = false
+	results := []RepoStatus{
+		{
+			Module:   Module{Path: "github.com/foo/bar"},
+			PushedAt: time.Now().AddDate(-5, 0, 0),
+		},
+	}
+	stale := filterStale(results)
+	if stale != nil {
+		t.Error("expected nil when stale disabled")
+	}
+}
+
+func TestPrintStaleTable(t *testing.T) {
+	savedStale := staleEnabled
+	savedY := staleYears
+	savedEnabled := durationEnabled
+	savedEnd := durationEndDate
+	defer func() {
+		staleEnabled = savedStale
+		staleYears = savedY
+		durationEnabled = savedEnabled
+		durationEndDate = savedEnd
+	}()
+
+	staleEnabled = true
+	staleYears = 2
+	durationEnabled = false
+
+	stale := []RepoStatus{
+		{
+			Module:   Module{Path: "github.com/old/repo", Version: "v1.0.0", Direct: true},
+			PushedAt: time.Date(2022, 1, 15, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	output := captureStdout(t, func() {
+		PrintStaleTable(stale)
+	})
+
+	if !strings.Contains(output, "github.com/old/repo") {
+		t.Error("should contain stale module path")
+	}
+	if !strings.Contains(output, "2022-01-15") {
+		t.Error("should contain pushed date")
+	}
+	if !strings.Contains(output, "direct") {
+		t.Error("should show direct label")
+	}
+}
+
+func TestPrintJSON_WithStale(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/foo/bar", Version: "v1.0.0", Direct: true, Owner: "foo", Repo: "bar"},
+			IsArchived: true,
+			ArchivedAt: time.Date(2024, 7, 22, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	stale := []RepoStatus{
+		{
+			Module:   Module{Path: "github.com/old/repo", Version: "v1.0.0", Direct: true, Owner: "old", Repo: "repo"},
+			PushedAt: time.Date(2022, 1, 15, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	output := captureStdout(t, func() {
+		PrintJSON(results, nil, false, nil, stale)
+	})
+
+	var out JSONOutput
+	if err := json.Unmarshal([]byte(output), &out); err != nil {
+		t.Fatalf("invalid JSON: %v\noutput: %s", err, output)
+	}
+
+	if len(out.Stale) != 1 {
+		t.Fatalf("expected 1 stale, got %d", len(out.Stale))
+	}
+	if out.Stale[0].Module != "github.com/old/repo" {
+		t.Errorf("stale module = %q", out.Stale[0].Module)
+	}
+	if out.Stale[0].PushedAt != "2022-01-15T00:00:00Z" {
+		t.Errorf("stale pushed_at = %q", out.Stale[0].PushedAt)
+	}
+}
+
+func TestSortResults_ByName(t *testing.T) {
+	savedSort := sortMode
+	defer func() { sortMode = savedSort }()
+	sortMode = "name"
+
+	results := []RepoStatus{
+		{Module: Module{Path: "github.com/z/z"}},
+		{Module: Module{Path: "github.com/a/a"}},
+		{Module: Module{Path: "github.com/m/m"}},
+	}
+	sortResults(results)
+
+	if results[0].Module.Path != "github.com/a/a" {
+		t.Errorf("expected a/a first, got %s", results[0].Module.Path)
+	}
+	if results[2].Module.Path != "github.com/z/z" {
+		t.Errorf("expected z/z last, got %s", results[2].Module.Path)
+	}
+}
+
+func TestSortResults_ByDuration(t *testing.T) {
+	savedSort := sortMode
+	defer func() { sortMode = savedSort }()
+	sortMode = "duration"
+
+	results := []RepoStatus{
+		{Module: Module{Path: "github.com/new/repo"}, ArchivedAt: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)},
+		{Module: Module{Path: "github.com/old/repo"}, ArchivedAt: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)},
+		{Module: Module{Path: "github.com/mid/repo"}, ArchivedAt: time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)},
+	}
+	sortResults(results)
+
+	// Oldest archived first
+	if results[0].Module.Path != "github.com/old/repo" {
+		t.Errorf("expected old/repo first, got %s", results[0].Module.Path)
+	}
+	if results[2].Module.Path != "github.com/new/repo" {
+		t.Errorf("expected new/repo last, got %s", results[2].Module.Path)
+	}
+}
+
+func TestSortResults_ByPushed(t *testing.T) {
+	savedSort := sortMode
+	defer func() { sortMode = savedSort }()
+	sortMode = "pushed"
+
+	results := []RepoStatus{
+		{Module: Module{Path: "github.com/recent/repo"}, PushedAt: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)},
+		{Module: Module{Path: "github.com/old/repo"}, PushedAt: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)},
+	}
+	sortResults(results)
+
+	// Oldest pushed first
+	if results[0].Module.Path != "github.com/old/repo" {
+		t.Errorf("expected old/repo first, got %s", results[0].Module.Path)
+	}
+}
+
+func TestPrintTable_Grouping(t *testing.T) {
+	results := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/direct/one", Version: "v1.0.0", Direct: true, Owner: "direct", Repo: "one"},
+			IsArchived: true,
+			ArchivedAt: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			Module:     Module{Path: "github.com/indirect/two", Version: "v2.0.0", Direct: false, Owner: "indirect", Repo: "two"},
+			IsArchived: true,
+			ArchivedAt: time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	output := captureStdout(t, func() {
+		PrintTable(results, nil, false)
+	})
+
+	if !strings.Contains(output, "Direct (1)") {
+		t.Errorf("should show Direct group header, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Indirect (1)") {
+		t.Errorf("should show Indirect group header, got:\n%s", output)
+	}
+}
+
+func TestFormatThreshold(t *testing.T) {
+	savedY := staleYears
+	savedM := staleMonths
+	savedD := staleDays
+	defer func() {
+		staleYears = savedY
+		staleMonths = savedM
+		staleDays = savedD
+	}()
+
+	staleYears = 2
+	staleMonths = 0
+	staleDays = 0
+	if got := formatThreshold(); got != "2y" {
+		t.Errorf("formatThreshold() = %q, want %q", got, "2y")
+	}
+
+	staleYears = 1
+	staleMonths = 6
+	staleDays = 0
+	if got := formatThreshold(); got != "1y6m" {
+		t.Errorf("formatThreshold() = %q, want %q", got, "1y6m")
+	}
+
+	staleYears = 0
+	staleMonths = 0
+	staleDays = 180
+	if got := formatThreshold(); got != "180d" {
+		t.Errorf("formatThreshold() = %q, want %q", got, "180d")
 	}
 }

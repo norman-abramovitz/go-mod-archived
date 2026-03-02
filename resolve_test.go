@@ -40,10 +40,10 @@ func TestExtractGitHubFromURL(t *testing.T) {
 
 func TestParseMetaTags(t *testing.T) {
 	tests := []struct {
-		name           string
-		html           string
-		wantGoImport   string
-		wantGoSource   string
+		name         string
+		html         string
+		wantGoImport string
+		wantGoSource string
 	}{
 		{
 			name:         "go-import only",
@@ -93,11 +93,11 @@ func TestParseMetaTags(t *testing.T) {
 
 func TestResolveViaProxy(t *testing.T) {
 	tests := []struct {
-		name       string
-		response   string
-		status     int
-		wantOwner  string
-		wantRepo   string
+		name      string
+		response  string
+		status    int
+		wantOwner string
+		wantRepo  string
 	}{
 		{
 			name:      "origin with github URL",

@@ -25,8 +25,11 @@ All code lives in the root package (`package main`), with no subdirectories. The
 - **resolve.go** — Resolves vanity imports (e.g., `google.golang.org/grpc`) to GitHub repos. Two-stage: tries Go module proxy first, falls back to HTML meta tag parsing.
 - **deprecated.go** — Fetches go.mod from `proxy.golang.org` to find `// Deprecated:` comments on the module directive.
 - **imports.go** — Uses ripgrep (`rg`) to find source files importing archived modules. Builds regex patterns with longest-prefix matching.
-- **output.go** — All output formatting: table (tabwriter), JSON, dependency tree, and file listings. Largest file (~690 lines).
-- **recursive.go** — Multi-module scanning: walks directory trees finding go.mod files, deduplicates repos globally across modules.
+- **output.go** — Table (tabwriter), JSON, dependency tree, file listings, stale detection, quickfix output, and sorting. Largest file.
+- **markdown.go** — GitHub-Flavored Markdown output format: tables, tree, files, stale sections.
+- **mermaid.go** — Mermaid flowchart diagram generation from dependency graph. Shows paths to archived/deprecated deps with CSS classes.
+- **ignore.go** — `.modrotignore` file parsing and `--ignore` inline filtering. `IgnoreList` type with `LoadIgnoreFile()`, `ParseIgnoreList()`, `BuildIgnoreList()`.
+- **recursive.go** — Multi-module scanning: walks directory trees finding go.mod files, deduplicates repos globally across modules. Uses `runConfig` struct with `outputFormat` string to dispatch to format-specific output functions.
 
 ### Key Data Types
 

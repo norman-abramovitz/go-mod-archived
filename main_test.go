@@ -225,3 +225,93 @@ func TestExtractDurationFlag_SingleDashWithDate(t *testing.T) {
 		t.Errorf("durationEndDate = %v, want %v", durationEndDate, want)
 	}
 }
+
+func TestExtractStaleFlag_NoFlag(t *testing.T) {
+	saved := os.Args
+	savedStale := staleEnabled
+	defer func() {
+		os.Args = saved
+		staleEnabled = savedStale
+	}()
+
+	staleEnabled = false
+	os.Args = []string{"cmd", "--files", "path/go.mod"}
+	extractStaleFlag()
+
+	if staleEnabled {
+		t.Error("expected staleEnabled=false when no --stale flag")
+	}
+	if len(os.Args) != 3 {
+		t.Errorf("expected 3 args, got %d: %v", len(os.Args), os.Args)
+	}
+}
+
+func TestExtractStaleFlag_BareFlag(t *testing.T) {
+	saved := os.Args
+	savedStale := staleEnabled
+	savedY := staleYears
+	savedM := staleMonths
+	savedD := staleDays
+	savedDuration := durationEnabled
+	savedEnd := durationEndDate
+	defer func() {
+		os.Args = saved
+		staleEnabled = savedStale
+		staleYears = savedY
+		staleMonths = savedM
+		staleDays = savedD
+		durationEnabled = savedDuration
+		durationEndDate = savedEnd
+	}()
+
+	staleEnabled = false
+	durationEnabled = false
+	os.Args = []string{"cmd", "--stale", "--files"}
+	extractStaleFlag()
+
+	if !staleEnabled {
+		t.Error("expected staleEnabled=true")
+	}
+	if staleYears != 2 {
+		t.Errorf("expected default staleYears=2, got %d", staleYears)
+	}
+	if !durationEnabled {
+		t.Error("expected durationEnabled=true (auto-enabled by --stale)")
+	}
+	for _, arg := range os.Args {
+		if arg == "--stale" {
+			t.Error("--stale should have been removed from os.Args")
+		}
+	}
+}
+
+func TestExtractStaleFlag_WithThreshold(t *testing.T) {
+	saved := os.Args
+	savedStale := staleEnabled
+	savedY := staleYears
+	savedM := staleMonths
+	savedD := staleDays
+	savedDuration := durationEnabled
+	savedEnd := durationEndDate
+	defer func() {
+		os.Args = saved
+		staleEnabled = savedStale
+		staleYears = savedY
+		staleMonths = savedM
+		staleDays = savedD
+		durationEnabled = savedDuration
+		durationEndDate = savedEnd
+	}()
+
+	staleEnabled = false
+	durationEnabled = false
+	os.Args = []string{"cmd", "--stale=1y6m"}
+	extractStaleFlag()
+
+	if !staleEnabled {
+		t.Error("expected staleEnabled=true")
+	}
+	if staleYears != 1 || staleMonths != 6 || staleDays != 0 {
+		t.Errorf("threshold = (%d, %d, %d), want (1, 6, 0)", staleYears, staleMonths, staleDays)
+	}
+}

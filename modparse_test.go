@@ -21,8 +21,8 @@ func TestExtractGitHub(t *testing.T) {
 		{"google.golang.org/grpc", "", ""},
 		{"gopkg.in/yaml.v3", "", ""},
 		{"cel.dev/expr", "", ""},
-		{"github.com/foo", "", ""},      // too few parts
-		{"github.com/", "", ""},          // trailing slash only
+		{"github.com/foo", "", ""},        // too few parts
+		{"github.com/", "", ""},           // trailing slash only
 		{"notgithub.com/foo/bar", "", ""}, // wrong host
 	}
 

@@ -46,9 +46,9 @@ func TestFindGoModFiles(t *testing.T) {
 
 	// Verify the found paths are the expected ones
 	expected := map[string]bool{
-		filepath.Join(root, "go.mod"):          true,
-		filepath.Join(root, "api", "go.mod"):   true,
-		filepath.Join(root, "sdk", "go.mod"):   true,
+		filepath.Join(root, "go.mod"):        true,
+		filepath.Join(root, "api", "go.mod"): true,
+		filepath.Join(root, "sdk", "go.mod"): true,
 	}
 	for _, p := range paths {
 		if !expected[p] {

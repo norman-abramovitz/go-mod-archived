@@ -20,6 +20,17 @@ var (
 	durationEndDate time.Time
 )
 
+// staleEnabled, staleThreshold control the --stale feature.
+var (
+	staleEnabled bool
+	staleYears   int
+	staleMonths  int
+	staleDays    int
+)
+
+// sortMode controls the sort order for archived modules: "name", "duration", "pushed".
+var sortMode = "name"
+
 // fmtDate formats a time using the current dateFmt setting.
 func fmtDate(t time.Time) string {
 	if t.IsZero() {
@@ -53,30 +64,16 @@ func calcDuration(archivedAt, endDate time.Time) (years, months, days int) {
 	return years, months, days
 }
 
-// formatDuration returns a human-readable duration string for how long a
-// dependency has been archived. Returns "" if duration mode is off or the
-// archived date is zero.
+// formatDuration returns a compact ISO 8601-style duration string for how long
+// a dependency has been archived (e.g. "3y11m7d"). Returns "" if duration mode
+// is off or the archived date is zero.
 func formatDuration(archivedAt time.Time) string {
-	if !durationEnabled || archivedAt.IsZero() {
-		return ""
-	}
-	y, m, d := calcDuration(archivedAt, durationEndDate)
-	var parts []string
-	if y > 0 {
-		parts = append(parts, fmt.Sprintf("%d %s", y, pluralize(y, "year", "years")))
-	}
-	if m > 0 {
-		parts = append(parts, fmt.Sprintf("%d %s", m, pluralize(m, "month", "months")))
-	}
-	if d > 0 || len(parts) == 0 {
-		parts = append(parts, fmt.Sprintf("%d %s", d, pluralize(d, "day", "days")))
-	}
-	return strings.Join(parts, ", ")
+	return formatDurationShort(archivedAt)
 }
 
-// formatDurationShort returns a compact duration string (e.g. "2y 3m 15d")
-// for use in tree output. Returns "" if duration mode is off or the
-// archived date is zero.
+// formatDurationShort returns a compact ISO 8601-style duration string
+// (e.g. "2y3m15d"). Returns "" if duration mode is off or the archived
+// date is zero.
 func formatDurationShort(archivedAt time.Time) string {
 	if !durationEnabled || archivedAt.IsZero() {
 		return ""
@@ -92,7 +89,7 @@ func formatDurationShort(archivedAt time.Time) string {
 	if d > 0 || len(parts) == 0 {
 		parts = append(parts, fmt.Sprintf("%dd", d))
 	}
-	return strings.Join(parts, " ")
+	return strings.Join(parts, "")
 }
 
 // hostDomain extracts the hosting domain from a module path.
@@ -102,6 +99,156 @@ func hostDomain(modulePath string) string {
 		return parts[0]
 	}
 	return ""
+}
+
+// parseThreshold parses a threshold string like "2y", "1y6m", "180d" into
+// years, months, days components. Returns an error for invalid formats.
+func parseThreshold(s string) (years, months, days int, err error) {
+	if s == "" {
+		return 0, 0, 0, fmt.Errorf("empty threshold")
+	}
+	remaining := s
+	for len(remaining) > 0 {
+		// Find next number
+		i := 0
+		for i < len(remaining) && remaining[i] >= '0' && remaining[i] <= '9' {
+			i++
+		}
+		if i == 0 || i >= len(remaining) {
+			return 0, 0, 0, fmt.Errorf("invalid threshold %q", s)
+		}
+		n := 0
+		for _, ch := range remaining[:i] {
+			n = n*10 + int(ch-'0')
+		}
+		unit := remaining[i]
+		switch unit {
+		case 'y':
+			years = n
+		case 'm':
+			months = n
+		case 'd':
+			days = n
+		default:
+			return 0, 0, 0, fmt.Errorf("invalid unit %q in threshold %q", string(unit), s)
+		}
+		remaining = remaining[i+1:]
+	}
+	return years, months, days, nil
+}
+
+// exceedsThreshold returns true if the time since pushedAt exceeds the given
+// years, months, days threshold relative to now.
+func exceedsThreshold(pushedAt time.Time, y, m, d int) bool {
+	if pushedAt.IsZero() {
+		return false
+	}
+	cutoff := time.Now().AddDate(-y, -m, -d)
+	return pushedAt.Before(cutoff)
+}
+
+// filterStale returns repos whose PushedAt exceeds the stale threshold
+// and are not archived or not-found.
+func filterStale(results []RepoStatus) []RepoStatus {
+	if !staleEnabled {
+		return nil
+	}
+	var stale []RepoStatus
+	for _, r := range results {
+		if r.IsArchived || r.NotFound {
+			continue
+		}
+		if exceedsThreshold(r.PushedAt, staleYears, staleMonths, staleDays) {
+			stale = append(stale, r)
+		}
+	}
+	return stale
+}
+
+// formatThreshold returns a human-readable threshold string (e.g. "2y", "1y6m").
+func formatThreshold() string {
+	var parts []string
+	if staleYears > 0 {
+		parts = append(parts, fmt.Sprintf("%dy", staleYears))
+	}
+	if staleMonths > 0 {
+		parts = append(parts, fmt.Sprintf("%dm", staleMonths))
+	}
+	if staleDays > 0 {
+		parts = append(parts, fmt.Sprintf("%dd", staleDays))
+	}
+	return strings.Join(parts, "")
+}
+
+// PrintStaleTable outputs a section listing modules that haven't been pushed
+// in longer than the stale threshold.
+func PrintStaleTable(stale []RepoStatus) {
+	if len(stale) == 0 {
+		return
+	}
+	sort.Slice(stale, func(i, j int) bool {
+		return stale[i].Module.Path < stale[j].Module.Path
+	})
+	fmt.Fprintf(os.Stderr, "\nSTALE DEPENDENCIES (%d %s not pushed in >%s)\n\n",
+		len(stale), pluralize(len(stale), "module", "modules"), formatThreshold())
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	if durationEnabled {
+		fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT\tLAST PUSHED\tINACTIVE")
+	} else {
+		fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT\tLAST PUSHED")
+	}
+	for _, r := range stale {
+		direct := "indirect"
+		if r.Module.Direct {
+			direct = "direct"
+		}
+		pushedAt := fmtDate(r.PushedAt)
+		if durationEnabled {
+			dur := formatDurationShort(r.PushedAt)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, pushedAt, dur)
+		} else {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, pushedAt)
+		}
+	}
+	w.Flush()
+}
+
+// sortResults sorts a slice of RepoStatus based on the current sortMode.
+func sortResults(results []RepoStatus) {
+	switch sortMode {
+	case "duration":
+		sort.Slice(results, func(i, j int) bool {
+			// Oldest archived first (earliest ArchivedAt)
+			if results[i].ArchivedAt.IsZero() && results[j].ArchivedAt.IsZero() {
+				return results[i].Module.Path < results[j].Module.Path
+			}
+			if results[i].ArchivedAt.IsZero() {
+				return false
+			}
+			if results[j].ArchivedAt.IsZero() {
+				return true
+			}
+			return results[i].ArchivedAt.Before(results[j].ArchivedAt)
+		})
+	case "pushed":
+		sort.Slice(results, func(i, j int) bool {
+			// Oldest pushed first (earliest PushedAt)
+			if results[i].PushedAt.IsZero() && results[j].PushedAt.IsZero() {
+				return results[i].Module.Path < results[j].Module.Path
+			}
+			if results[i].PushedAt.IsZero() {
+				return false
+			}
+			if results[j].PushedAt.IsZero() {
+				return true
+			}
+			return results[i].PushedAt.Before(results[j].PushedAt)
+		})
+	default: // "name"
+		sort.Slice(results, func(i, j int) bool {
+			return results[i].Module.Path < results[j].Module.Path
+		})
+	}
 }
 
 // PrintSkippedTable outputs a section listing non-GitHub modules with enrichment data.
@@ -127,6 +274,24 @@ func PrintSkippedTable(modules []Module) {
 	w.Flush()
 }
 
+// printArchivedRows writes archived module rows to a tabwriter.
+func printArchivedRows(w *tabwriter.Writer, archived []RepoStatus) {
+	for _, r := range archived {
+		direct := "indirect"
+		if r.Module.Direct {
+			direct = "direct"
+		}
+		archivedAt := fmtDate(r.ArchivedAt)
+		pushedAt := fmtDate(r.PushedAt)
+		if durationEnabled {
+			dur := formatDuration(r.ArchivedAt)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, archivedAt, dur, pushedAt)
+		} else {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, archivedAt, pushedAt)
+		}
+	}
+}
+
 // PrintTable outputs archived (or all) results in a human-readable table.
 // If deprecatedModules is non-nil, a DEPRECATED MODULES section is appended.
 func PrintTable(results []RepoStatus, nonGitHubModules []Module, showAll bool, deprecatedModules ...[]Module) {
@@ -143,9 +308,17 @@ func PrintTable(results []RepoStatus, nonGitHubModules []Module, showAll bool, d
 		}
 	}
 
-	sort.Slice(archived, func(i, j int) bool {
-		return archived[i].Module.Path < archived[j].Module.Path
-	})
+	// Split archived into direct and indirect
+	var archivedDirect, archivedIndirect []RepoStatus
+	for _, r := range archived {
+		if r.Module.Direct {
+			archivedDirect = append(archivedDirect, r)
+		} else {
+			archivedIndirect = append(archivedIndirect, r)
+		}
+	}
+	sortResults(archivedDirect)
+	sortResults(archivedIndirect)
 
 	totalChecked := len(results)
 
@@ -157,19 +330,19 @@ func PrintTable(results []RepoStatus, nonGitHubModules []Module, showAll bool, d
 		} else {
 			fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT\tARCHIVED AT\tLAST PUSHED")
 		}
-		for _, r := range archived {
-			direct := "indirect"
-			if r.Module.Direct {
-				direct = "direct"
-			}
-			archivedAt := fmtDate(r.ArchivedAt)
-			pushedAt := fmtDate(r.PushedAt)
-			if durationEnabled {
-				dur := formatDuration(r.ArchivedAt)
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, archivedAt, dur, pushedAt)
-			} else {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, archivedAt, pushedAt)
-			}
+
+		// Show grouped output when there are both direct and indirect
+		if len(archivedDirect) > 0 && len(archivedIndirect) > 0 {
+			fmt.Fprintf(w, "\t\t\t\n")
+			fmt.Fprintf(w, "Direct (%d)\t\t\t\n", len(archivedDirect))
+			printArchivedRows(w, archivedDirect)
+			fmt.Fprintf(w, "\t\t\t\n")
+			fmt.Fprintf(w, "Indirect (%d)\t\t\t\n", len(archivedIndirect))
+			printArchivedRows(w, archivedIndirect)
+		} else {
+			// Only one group exists, no sub-headers needed
+			all := append(archivedDirect, archivedIndirect...)
+			printArchivedRows(w, all)
 		}
 		w.Flush()
 	} else {
@@ -253,6 +426,24 @@ func PrintFiles(results []RepoStatus, fileMatches map[string][]FileMatch) {
 	}
 }
 
+// PrintFilesPlain outputs quickfix-format lines: file:line:module_path
+// This format is compatible with vim's quickfix list and similar editor integrations.
+func PrintFilesPlain(results []RepoStatus, fileMatches map[string][]FileMatch) {
+	var archivedPaths []string
+	for _, r := range results {
+		if r.IsArchived {
+			archivedPaths = append(archivedPaths, r.Module.Path)
+		}
+	}
+	sort.Strings(archivedPaths)
+
+	for _, modPath := range archivedPaths {
+		for _, m := range fileMatches[modPath] {
+			fmt.Fprintf(os.Stdout, "%s:%d:%s\n", m.File, m.Line, modPath)
+		}
+	}
+}
+
 // PrintDeprecatedTable outputs a standalone deprecated modules table.
 // Used when --tree mode needs to append a deprecated section separately.
 func PrintDeprecatedTable(modules []Module) {
@@ -293,13 +484,14 @@ type JSONSkippedModule struct {
 
 // JSONOutput is the structure for JSON output mode.
 type JSONOutput struct {
-	Archived        []JSONModule        `json:"archived"`
-	Deprecated      []JSONModule        `json:"deprecated,omitempty"`
-	NotFound        []JSONModule        `json:"not_found,omitempty"`
-	Active          []JSONModule        `json:"active,omitempty"`
-	NonGitHubCount  int                 `json:"non_github_count"`
+	Archived         []JSONModule        `json:"archived"`
+	Stale            []JSONModule        `json:"stale,omitempty"`
+	Deprecated       []JSONModule        `json:"deprecated,omitempty"`
+	NotFound         []JSONModule        `json:"not_found,omitempty"`
+	Active           []JSONModule        `json:"active,omitempty"`
+	NonGitHubCount   int                 `json:"non_github_count"`
 	NonGitHubModules []JSONSkippedModule `json:"non_github_modules,omitempty"`
-	TotalChecked    int                 `json:"total_checked"`
+	TotalChecked     int                 `json:"total_checked"`
 }
 
 type JSONModule struct {
@@ -324,8 +516,8 @@ type JSONSourceFile struct {
 }
 
 // buildJSONOutput creates the JSONOutput data structure without writing it.
-// deprecatedModules is optional; if provided, the first element is used.
-func buildJSONOutput(results []RepoStatus, nonGitHubModules []Module, showAll bool, fileMatches map[string][]FileMatch, deprecatedModules ...[]Module) JSONOutput {
+// staleResults and deprecatedModules are optional; pass nil if not applicable.
+func buildJSONOutput(results []RepoStatus, nonGitHubModules []Module, showAll bool, fileMatches map[string][]FileMatch, staleResults []RepoStatus, deprecatedModules ...[]Module) JSONOutput {
 	out := JSONOutput{
 		NonGitHubCount: len(nonGitHubModules),
 		TotalChecked:   len(results),
@@ -391,6 +583,21 @@ func buildJSONOutput(results []RepoStatus, nonGitHubModules []Module, showAll bo
 		}
 	}
 
+	// Add stale modules if provided.
+	for _, r := range staleResults {
+		jm := JSONModule{
+			Module:  r.Module.Path,
+			Version: r.Module.Version,
+			Direct:  r.Module.Direct,
+			Owner:   r.Module.Owner,
+			Repo:    r.Module.Repo,
+		}
+		if !r.PushedAt.IsZero() {
+			jm.PushedAt = r.PushedAt.Format("2006-01-02T15:04:05Z")
+		}
+		out.Stale = append(out.Stale, jm)
+	}
+
 	// Add deprecated modules if provided.
 	if len(deprecatedModules) > 0 && len(deprecatedModules[0]) > 0 {
 		for _, m := range deprecatedModules[0] {
@@ -410,9 +617,9 @@ func buildJSONOutput(results []RepoStatus, nonGitHubModules []Module, showAll bo
 
 // PrintJSON outputs results as JSON. If fileMatches is non-nil, archived
 // modules will include source_files arrays.
-// deprecatedModules is optional; if provided, the first element is used.
-func PrintJSON(results []RepoStatus, nonGitHubModules []Module, showAll bool, fileMatches map[string][]FileMatch, deprecatedModules ...[]Module) {
-	out := buildJSONOutput(results, nonGitHubModules, showAll, fileMatches, deprecatedModules...)
+// staleResults and deprecatedModules are optional; pass nil if not applicable.
+func PrintJSON(results []RepoStatus, nonGitHubModules []Module, showAll bool, fileMatches map[string][]FileMatch, staleResults []RepoStatus, deprecatedModules ...[]Module) {
+	out := buildJSONOutput(results, nonGitHubModules, showAll, fileMatches, staleResults, deprecatedModules...)
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	enc.Encode(out)
@@ -488,7 +695,7 @@ func buildTree(results []RepoStatus, graph map[string][]string, allModules []Mod
 
 	// Build lookup from module path → version, owner/repo, and deprecation (from go.mod)
 	versionByPath := make(map[string]string)
-	repoByPath := make(map[string]string)    // module path → "owner/repo"
+	repoByPath := make(map[string]string)       // module path → "owner/repo"
 	deprecatedByPath := make(map[string]string) // module path → deprecation message
 	for _, m := range allModules {
 		versionByPath[m.Path] = m.Version
@@ -659,15 +866,15 @@ type JSONTreeOutput struct {
 
 // JSONTreeEntry represents a direct dependency in the JSON tree.
 type JSONTreeEntry struct {
-	Module                 string                `json:"module"`
-	Version                string                `json:"version"`
-	Archived               bool                  `json:"archived"`
-	ArchivedAt             string                `json:"archived_at,omitempty"`
-	ArchivedDuration       string                `json:"archived_duration,omitempty"`
-	PushedAt               string                `json:"pushed_at,omitempty"`
-	DeprecatedMessage      string                `json:"deprecated_message,omitempty"`
-	SourceFiles            []JSONSourceFile      `json:"source_files,omitempty"`
-	ArchivedDependencies   []JSONTreeArchivedDep `json:"archived_dependencies"`
+	Module               string                `json:"module"`
+	Version              string                `json:"version"`
+	Archived             bool                  `json:"archived"`
+	ArchivedAt           string                `json:"archived_at,omitempty"`
+	ArchivedDuration     string                `json:"archived_duration,omitempty"`
+	PushedAt             string                `json:"pushed_at,omitempty"`
+	DeprecatedMessage    string                `json:"deprecated_message,omitempty"`
+	SourceFiles          []JSONSourceFile      `json:"source_files,omitempty"`
+	ArchivedDependencies []JSONTreeArchivedDep `json:"archived_dependencies"`
 }
 
 // JSONTreeArchivedDep represents an archived transitive dependency.

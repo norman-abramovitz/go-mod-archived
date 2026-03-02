@@ -117,10 +117,10 @@ go 1.21
 
 func TestFetchGoModDeprecation(t *testing.T) {
 	tests := []struct {
-		name    string
-		body    string
-		status  int
-		want    string
+		name   string
+		body   string
+		status int
+		want   string
 	}{
 		{
 			name: "deprecated module",

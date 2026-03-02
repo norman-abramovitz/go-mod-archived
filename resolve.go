@@ -65,7 +65,7 @@ func resolveVanityImportsWithResolver(modules []Module, maxWorkers int, r *resol
 
 	// Bounded worker pool.
 	type result struct {
-		idx        int
+		idx         int
 		owner, repo string
 	}
 	results := make(chan result, len(indices))
@@ -297,7 +297,7 @@ func resolveAcrossModulesWithResolver(modules []moduleInfo, r *resolver) int {
 
 	// Resolve concurrently with bounded workers.
 	type result struct {
-		path       string
+		path        string
 		owner, repo string
 	}
 	results := make(chan result, len(uniquePaths))

@@ -11,7 +11,7 @@ import (
 
 // Module represents a parsed go.mod dependency.
 type Module struct {
-	Path          string    // full module path, e.g. "github.com/foo/bar/v2"
+	Path          string // full module path, e.g. "github.com/foo/bar/v2"
 	Version       string
 	Direct        bool
 	Owner         string    // GitHub owner (empty if non-GitHub)

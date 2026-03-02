@@ -41,19 +41,55 @@ If no path is given, looks for `go.mod` in the current directory. You can also p
 
 ### Flags
 
+**Output format:**
+
 | Flag | Description |
 |------|-------------|
-| `--json` | Output as JSON |
-| `--all` | Show all modules, not just archived ones |
+| `--format FORMAT` | Output format: `table` (default), `json`, `markdown`, `mermaid`, `quickfix` |
+| `--json` | Output as JSON (alias for `--format=json`) |
+| `--markdown` | Output as GitHub-Flavored Markdown (alias for `--format=markdown`) |
+| `--mermaid` | Output Mermaid flowchart diagram (alias for `--format=mermaid`) |
+| `--quickfix` | Output `file:line:module` for editor quickfix (alias for `--format=quickfix`) |
+
+**Filtering:**
+
+| Flag | Description |
+|------|-------------|
 | `--direct-only` | Only check direct dependencies (skip indirect) |
-| `--tree` | Show dependency tree for archived modules (uses `go mod graph`) |
-| `--files` | Show source files that import archived modules (requires `rg`) |
+| `--ignore-file PATH` | Path to ignore file (default: `.modrotignore` next to `go.mod`) |
+| `--ignore MODULES` | Comma-separated list of module paths to ignore |
+| `--stale[=THRESHOLD]` | Show dependencies not pushed in >THRESHOLD (default: `2y`, e.g. `1y6m`, `180d`) |
+
+**Analysis:**
+
+| Flag | Description |
+|------|-------------|
 | `--resolve` | Resolve vanity import paths to GitHub repos (e.g. `google.golang.org/grpc` → `github.com/grpc/grpc-go`) |
 | `--deprecated` | Check for deprecated modules via the Go module proxy |
-| `--recursive` | Scan all go.mod files in the directory tree |
+| `--duration[=DATE]` | Show how long dependencies have been archived (default: today) |
+
+**Display:**
+
+| Flag | Description |
+|------|-------------|
+| `--all` | Show all modules, not just archived ones |
+| `--tree` | Show dependency tree for archived modules (uses `go mod graph`) |
+| `--files` | Show source files that import archived modules (requires `rg`) |
+| `--sort ORDER` | Sort archived modules: `name` (default), `duration`, `pushed` |
 | `--time` | Include time in date output (2006-01-02 15:04:05 instead of 2006-01-02) |
+
+**Execution:**
+
+| Flag | Description |
+|------|-------------|
 | `--workers N` | Repos per GitHub GraphQL batch request (default 50) |
 | `--go-version V` | Override the Go toolchain version from go.mod (e.g. `1.21.0`) |
+| `--recursive` | Scan all go.mod files in the directory tree |
+
+**Info:**
+
+| Flag | Description |
+|------|-------------|
 | `--version` | Print version information and exit |
 
 ### Exit codes
@@ -311,6 +347,108 @@ $ modrot --deprecated --json
 ```
 
 Deprecation checks all modules (not just GitHub ones), uses each module's exact version from go.mod, and respects `--direct-only`. In `--recursive` mode, proxy requests are deduplicated across go.mod files. In `--tree` mode, modules that are both archived and deprecated show `[DEPRECATED]` alongside `[ARCHIVED]`.
+
+### Stale dependency detection
+
+The `--stale` flag identifies dependencies that haven't been pushed to in a long time, even if they aren't archived:
+
+```
+$ modrot --stale
+STALE DEPENDENCIES (3 modules not pushed in >2y)
+
+MODULE                                     VERSION   DIRECT    LAST PUSHED  STALE
+github.com/mitchellh/copystructure         v1.2.0    direct    2021-05-05   4y9m
+github.com/mitchellh/reflectwalk           v1.0.2    direct    2022-04-21   3y10m
+github.com/pkg/errors                      v0.9.1    indirect  2021-11-02   4y4m
+```
+
+Customize the threshold with a duration value:
+
+```
+$ modrot --stale=1y6m    # Stale if not pushed in 1 year 6 months
+$ modrot --stale=180d    # Stale if not pushed in 180 days
+```
+
+Stale detection is informational only and does not affect the exit code.
+
+### Markdown output
+
+Generate GitHub-Flavored Markdown tables for embedding in reports or issues:
+
+```
+$ modrot --markdown
+## ARCHIVED DEPENDENCIES
+
+| Module | Version | Direct | Archived At | Last Pushed |
+| --- | --- | --- | --- | --- |
+| github.com/mitchellh/copystructure | v1.0.0 | direct | 2024-07-22 | 2021-05-05 |
+```
+
+Combines with `--tree`, `--files`, `--stale`, and `--all`.
+
+### Mermaid diagrams
+
+Generate [Mermaid](https://mermaid.js.org/) flowchart diagrams showing dependency paths to archived modules:
+
+```
+$ modrot --mermaid
+graph TD
+    root["mymodule"]
+    n0["github.com/Masterminds/sprig/v3@v3.2.3"]
+    n1["github.com/mitchellh/copystructure@v1.2.0"]:::archived
+    n2["github.com/mitchellh/reflectwalk@v1.0.2"]:::archived
+    root --> n0
+    n0 --> n1
+    n0 --> n2
+    classDef archived fill:#f96,stroke:#333,stroke-width:2px
+    classDef deprecated fill:#ff9,stroke:#333,stroke-width:2px
+```
+
+Only paths leading to archived or deprecated dependencies are included. Paste the output into any Mermaid-compatible renderer (GitHub, GitLab, Notion, etc.).
+
+### Quickfix output
+
+Generate editor-compatible quickfix output for navigating directly to files importing archived modules:
+
+```
+$ modrot --quickfix
+audit/hashstructure.go:14:github.com/mitchellh/copystructure
+sdk/logical/request.go:14:github.com/mitchellh/copystructure
+audit/hashstructure.go:15:github.com/mitchellh/reflectwalk
+```
+
+Use with vim: `vim -q <(modrot --quickfix)`
+
+### Ignoring dependencies
+
+Create a `.modrotignore` file next to your `go.mod` to exclude specific modules:
+
+```
+# Modules we've evaluated and accepted
+github.com/pkg/errors
+github.com/mitchellh/mapstructure
+```
+
+Or use inline ignore:
+
+```
+$ modrot --ignore github.com/pkg/errors,github.com/mitchellh/mapstructure
+```
+
+Override the ignore file path with `--ignore-file`:
+
+```
+$ modrot --ignore-file path/to/ignorefile
+```
+
+### Sorting
+
+Sort archived dependencies by name (default), archive duration, or last push date:
+
+```
+$ modrot --sort=duration    # Longest archived first
+$ modrot --sort=pushed      # Least recently pushed first
+```
 
 ## Development
 
