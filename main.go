@@ -57,6 +57,10 @@ func main() {
 
 Detect archived GitHub dependencies in a Go project.
 
+With no flags, checks go.mod in the current directory and prints archived
+dependencies as a table. Exits 1 if any are found (useful for CI).
+Flags can appear before or after the path argument.
+
 Output format:
   --format string       Output format: table, json, markdown, mermaid, quickfix (default "table")
   --json                Output as JSON (alias for --format=json)
@@ -65,30 +69,42 @@ Output format:
   --quickfix            Output file:line:module for editor quickfix (alias for --format=quickfix)
 
 Filtering:
-  --direct-only         Only check direct dependencies
+  --direct-only         Only check direct dependencies (useful for CI)
   --ignore-file string  Path to ignore file (default: .modrotignore next to go.mod)
   --ignore string       Comma-separated list of module paths to ignore
   --stale[=THRESHOLD]   Show dependencies not pushed in >THRESHOLD (default: 2y, e.g. 1y6m, 180d)
 
 Analysis:
-  --resolve             Resolve vanity import paths to GitHub repos
+  --resolve             Resolve vanity import paths to GitHub repos (recommended)
   --deprecated          Check for deprecated modules via the Go module proxy
   --duration[=DATE]     Show how long dependencies have been archived (default: today)
 
 Display:
   --all                 Show all modules, not just archived ones
   --tree                Show dependency tree for archived modules (uses go mod graph)
-  --files               Show source files that import archived modules
+  --files               Show source files that import archived modules (requires rg)
   --sort string         Sort order for archived modules: name, duration, pushed (default "name")
   --time                Include time in date output
 
 Execution:
   --workers int         Number of repos per GitHub GraphQL batch request (default 50)
   --go-version string   Override the Go toolchain version from go.mod
-  --recursive           Scan all go.mod files in the directory tree
+  --recursive           Scan all go.mod files in the directory tree (monorepos)
 
 Info:
   --version             Print version information and exit
+
+Examples:
+  modrot                                     Check current directory
+  modrot /path/to/go.mod                     Check a specific go.mod
+  modrot --direct-only                       Direct dependencies only
+  modrot --direct-only --stale               Verify no archived or stale deps
+  modrot --resolve --deprecated --stale      Full dependency health check
+  modrot /path/to/pkg/go.mod --all --stale   Evaluate a package before adopting
+  modrot --tree --files                      Dependency paths and affected files
+  modrot --markdown --all --deprecated       Markdown for release notes
+  modrot --json | jq '.archived[].module'    Scripting with JSON output
+  modrot --recursive /path/to/monorepo       Scan all go.mod files in a tree
 `)
 	}
 	flag.Parse()

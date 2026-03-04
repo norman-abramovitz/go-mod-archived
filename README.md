@@ -100,7 +100,7 @@ If no path is given, looks for `go.mod` in the current directory. You can also p
 
 ## Examples
 
-### Default table output
+### Quick scan
 
 ```
 $ modrot
@@ -117,7 +117,7 @@ github.com/pkg/errors                      v0.9.1    indirect  2021-12-01   2021
 Skipped 61 non-GitHub modules.
 ```
 
-### Direct dependencies only
+Focus on what you directly control with `--direct-only`:
 
 ```
 $ modrot --direct-only
@@ -133,58 +133,125 @@ github.com/mitchellh/pointerstructure      v1.2.1    direct  2024-07-22   2023-0
 github.com/mitchellh/reflectwalk           v1.0.2    direct  2024-07-22   2022-04-21
 ```
 
-### Dependency tree
+Add `--time` to include timestamps in date columns (2024-07-22 20:44:18 instead of 2024-07-22).
 
-Shows which direct dependencies transitively pull in archived modules:
+### Deep analysis
 
-```
-$ modrot --tree
-github.com/Masterminds/sprig/v3
-  ├── github.com/mitchellh/copystructure [ARCHIVED]
-  └── github.com/mitchellh/reflectwalk [ARCHIVED]
-github.com/hashicorp/go-discover
-  ├── github.com/Azure/go-autorest/autorest [ARCHIVED]
-  ├── github.com/aws/aws-sdk-go [ARCHIVED]
-  ├── github.com/denverdino/aliyungo [ARCHIVED]
-  ├── github.com/nicolai86/scaleway-sdk [ARCHIVED]
-  └── github.com/pkg/errors [ARCHIVED]
-github.com/mitchellh/copystructure [ARCHIVED]
-  └── github.com/mitchellh/reflectwalk [ARCHIVED]
-```
-
-### Source file scanning
-
-Shows which source files import each archived module, helping prioritize replacements:
+The `--resolve` flag resolves vanity import paths (`google.golang.org/grpc`, `k8s.io/api`, `gopkg.in/yaml.v3`, etc.) to their real GitHub repos. The `--deprecated` flag checks for `// Deprecated:` comments in go.mod files via the Go module proxy. The `--stale` flag finds dependencies not pushed in a long time, even if not archived.
 
 ```
-$ modrot --files
+$ modrot --resolve --deprecated --stale=1y
+Resolved 50 non-GitHub modules to GitHub repos.
+Found 2 deprecated modules.
+Checking 265 GitHub modules...
+
+ARCHIVED DEPENDENCIES (20 of 265 github.com modules)
+
+MODULE                                     VERSION   DIRECT    ARCHIVED AT  LAST PUSHED
+github.com/mitchellh/copystructure         v1.2.0    direct    2024-07-22   2021-05-05
+gopkg.in/yaml.v2                           v2.4.0    indirect  2025-04-01   2025-04-01
 ...
-SOURCE FILES IMPORTING ARCHIVED MODULES
 
-github.com/mitchellh/copystructure (10 files)
-  audit/hashstructure.go:14
-  sdk/logical/request.go:14
-  vault/acl.go:21
-  vault/mount_entry.go:14
-  vault/policy.go:17
-  ...
+DEPRECATED MODULES (2 modules)
 
-github.com/mitchellh/reflectwalk (1 file)
-  audit/hashstructure.go:15
+MODULE                                                 VERSION  DIRECT    MESSAGE
+github.com/Azure/azure-sdk-for-go/sdk/keyvault/azkeys  v0.10.0  indirect  use github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys instead
+github.com/golang/protobuf                             v1.5.4   indirect  Use the "google.golang.org/protobuf" module instead.
 
-github.com/pkg/errors (0 files)
+STALE DEPENDENCIES (3 modules not pushed in >1y)
+...
 ```
 
-Combines with `--json` to add `source_files` arrays, or with `--tree` to append file counts:
+These flags are independent and combine freely. Stale detection is informational only — it does not affect the exit code. Use `--stale=1y6m` or `--stale=180d` to customize the threshold (default: 2y).
+
+### Dependency paths and impact
+
+`--tree` shows which direct dependencies transitively pull in archived modules. `--files` shows which source files import them, helping prioritize replacements. These combine naturally:
 
 ```
-$ modrot --files --tree
+$ modrot --tree --files
 github.com/Masterminds/sprig/v3@v3.2.3
   ├── github.com/mitchellh/copystructure@v1.2.0 [ARCHIVED 2024-07-22] (10 files)
   └── github.com/mitchellh/reflectwalk@v1.0.2 [ARCHIVED 2024-07-22] (1 file)
+github.com/hashicorp/go-discover
+  ├── github.com/Azure/go-autorest/autorest [ARCHIVED]
+  ├── github.com/aws/aws-sdk-go [ARCHIVED]
+  └── github.com/pkg/errors [ARCHIVED]
 ```
 
-### JSON output
+`--mermaid` generates [Mermaid](https://mermaid.js.org/) flowchart diagrams showing paths to archived or deprecated dependencies. Paste the output into any Mermaid-compatible renderer (GitHub, GitLab, Notion, etc.):
+
+```
+$ modrot --mermaid
+graph TD
+    root["mymodule"]
+    n0["github.com/Masterminds/sprig/v3@v3.2.3"]
+    n1["github.com/mitchellh/copystructure@v1.2.0"]:::archived
+    n2["github.com/mitchellh/reflectwalk@v1.0.2"]:::archived
+    root --> n0
+    n0 --> n1
+    n0 --> n2
+    classDef archived fill:#f96,stroke:#333,stroke-width:2px
+    classDef deprecated fill:#ff9,stroke:#333,stroke-width:2px
+```
+
+### Developer workflow
+
+**Verify after adding dependencies** — run modrot after `go get` to catch archived or stale packages before they get committed:
+
+```
+$ modrot --direct-only --stale
+$ modrot --resolve --deprecated             # Full picture including vanity imports
+```
+
+**Evaluate a package before adopting it** — point modrot at another project's go.mod to assess its dependency health:
+
+```
+$ modrot /path/to/candidate/go.mod --resolve --deprecated --stale
+$ modrot --all /path/to/candidate/go.mod    # See every dependency's status
+```
+
+### CI/CD integration
+
+modrot exits 1 when archived dependencies are found, making it a natural CI gate:
+
+**GitHub Actions:**
+
+```yaml
+- name: Check for archived dependencies
+  run: modrot --direct-only
+```
+
+**Markdown output for release notes:**
+
+```bash
+modrot --markdown --all --deprecated > dependency-report.md
+```
+
+**JSON scripting with jq:**
+
+```bash
+# List archived module paths
+modrot --json | jq -r '.archived[].module'
+
+# Count archived direct dependencies
+modrot --json | jq '[.archived[] | select(.direct)] | length'
+```
+
+**Editor quickfix** — navigate directly to files importing archived modules:
+
+```
+$ modrot --quickfix
+audit/hashstructure.go:14:github.com/mitchellh/copystructure
+sdk/logical/request.go:14:github.com/mitchellh/copystructure
+audit/hashstructure.go:15:github.com/mitchellh/reflectwalk
+```
+
+Use with vim: `vim -q <(modrot --quickfix)`
+
+### Output formats
+
+**JSON:**
 
 ```
 $ modrot --json
@@ -205,175 +272,9 @@ $ modrot --json
 }
 ```
 
-### JSON dependency tree
+Combine `--tree --json` for a structured tree, or add `--files` to include `source_files` arrays. With `--deprecated`, a separate `"deprecated"` array is included.
 
-Combine `--tree --json` for a structured tree showing which direct dependencies pull in archived transitive deps:
-
-```
-$ modrot --tree --json
-{
-  "tree": [
-    {
-      "module": "github.com/Masterminds/sprig/v3",
-      "version": "v3.2.3",
-      "archived": false,
-      "archived_dependencies": [
-        {
-          "module": "github.com/mitchellh/copystructure",
-          "version": "v1.2.0",
-          "archived_at": "2024-07-22T20:44:18Z",
-          "pushed_at": "2021-05-05T17:08:29Z"
-        },
-        {
-          "module": "github.com/mitchellh/reflectwalk",
-          "version": "v1.0.2",
-          "archived_at": "2024-07-22T20:48:05Z",
-          "pushed_at": "2022-04-21T16:48:49Z"
-        }
-      ]
-    },
-    {
-      "module": "github.com/mitchellh/copystructure",
-      "version": "v1.2.0",
-      "archived": true,
-      "archived_at": "2024-07-22T20:44:18Z",
-      "pushed_at": "2021-05-05T17:08:29Z",
-      "archived_dependencies": []
-    }
-  ],
-  "skipped_non_github": 61,
-  "total_checked": 234
-}
-```
-
-Add `--files` to include `source_files` arrays on archived entries.
-
-### Recursive scanning
-
-For multi-module repos, `--recursive` discovers all `go.mod` files in the directory tree, queries GitHub once for all unique repos, and outputs per-module results:
-
-```
-$ modrot --recursive --direct-only /path/to/project
-Found 10 go.mod files, checking 90 unique GitHub repos...
-=== api/go.mod — github.com/myorg/myapp/api/v2 ===
-
-No archived dependencies found among 11 github.com modules.
-
-=== go.mod — github.com/myorg/myapp ===
-
-ARCHIVED DEPENDENCIES (5 of 83 github.com modules)
-
-MODULE                                     VERSION   DIRECT  ARCHIVED AT  LAST PUSHED
-github.com/mitchellh/copystructure         v1.2.0    direct  2024-07-22   2021-05-05
-github.com/mitchellh/reflectwalk           v1.0.2    direct  2024-07-22   2022-04-21
-...
-
-=== sdk/go.mod — github.com/myorg/myapp/sdk/v2 ===
-
-ARCHIVED DEPENDENCIES (3 of 34 github.com modules)
-...
-```
-
-Skips `vendor/`, `testdata/`, and hidden directories. Combines with all other flags (`--json`, `--tree`, `--files`, etc.).
-
-### Resolving vanity imports
-
-By default, only `github.com/*` modules are checked. Many Go modules use vanity import paths (`google.golang.org/grpc`, `k8s.io/api`, `gopkg.in/yaml.v3`, `go.uber.org/zap`, etc.) that are actually hosted on GitHub. The `--resolve` flag resolves these to their real GitHub repos so they can be checked too:
-
-```
-$ modrot --resolve
-Resolved 50 non-GitHub modules to GitHub repos.
-Checking 265 GitHub modules...
-
-ARCHIVED DEPENDENCIES (20 of 265 github.com modules)
-
-MODULE                                     VERSION   DIRECT    ARCHIVED AT  LAST PUSHED
-github.com/mitchellh/copystructure         v1.2.0    direct    2024-07-22   2021-05-05
-gopkg.in/yaml.v2                           v2.4.0    indirect  2025-04-01   2025-04-01
-...
-
-Skipped 11 non-GitHub modules.
-```
-
-Without `--resolve`, the same project shows 215 GitHub modules checked and 61 skipped. With it, 50 of those 61 resolve to GitHub repos, leaving only 11 truly non-GitHub modules (mostly `golang.org/x/*` which lives on Google's own infrastructure).
-
-Resolution uses two methods in sequence:
-1. **Go module proxy** (`proxy.golang.org`) — fast, structured JSON with the repo's VCS URL
-2. **HTML meta tags** — fallback for modules like `gopkg.in/*` where the proxy lacks origin info; parses `go-import` and `go-source` meta tags
-
-Combines with all other flags. In `--recursive` mode, resolution is deduplicated across all go.mod files.
-
-### Checking for deprecated modules
-
-GitHub archival and Go module deprecation are independent signals. Many archived repos were never formally deprecated in their `go.mod`, and some modules like `github.com/golang/protobuf` are formally deprecated but not archived. The `--deprecated` flag checks for `// Deprecated:` comments in go.mod files via the Go module proxy:
-
-```
-$ modrot --deprecated
-Found 2 deprecated modules.
-Checking 234 GitHub modules...
-
-ARCHIVED DEPENDENCIES (19 of 234 github.com modules)
-
-MODULE                                     VERSION   DIRECT    ARCHIVED AT  LAST PUSHED
-github.com/mitchellh/copystructure         v1.2.0    direct    2024-07-22   2021-05-05
-...
-
-DEPRECATED MODULES (2 modules)
-
-MODULE                                                 VERSION  DIRECT    MESSAGE
-github.com/Azure/azure-sdk-for-go/sdk/keyvault/azkeys  v0.10.0  indirect  use github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys instead
-github.com/golang/protobuf                             v1.5.4   indirect  Use the "google.golang.org/protobuf" module instead.
-
-Skipped 61 non-GitHub modules.
-```
-
-In JSON output, deprecated modules appear in a separate `"deprecated"` array with `deprecated_message` fields:
-
-```
-$ modrot --deprecated --json
-{
-  "archived": [ ... ],
-  "deprecated": [
-    {
-      "module": "github.com/golang/protobuf",
-      "version": "v1.5.4",
-      "direct": false,
-      "deprecated_message": "Use the \"google.golang.org/protobuf\" module instead."
-    }
-  ],
-  "skipped_non_github": 61,
-  "total_checked": 234
-}
-```
-
-Deprecation checks all modules (not just GitHub ones), uses each module's exact version from go.mod, and respects `--direct-only`. In `--recursive` mode, proxy requests are deduplicated across go.mod files. In `--tree` mode, modules that are both archived and deprecated show `[DEPRECATED]` alongside `[ARCHIVED]`.
-
-### Stale dependency detection
-
-The `--stale` flag identifies dependencies that haven't been pushed to in a long time, even if they aren't archived:
-
-```
-$ modrot --stale
-STALE DEPENDENCIES (3 modules not pushed in >2y)
-
-MODULE                                     VERSION   DIRECT    LAST PUSHED  STALE
-github.com/mitchellh/copystructure         v1.2.0    direct    2021-05-05   4y9m
-github.com/mitchellh/reflectwalk           v1.0.2    direct    2022-04-21   3y10m
-github.com/pkg/errors                      v0.9.1    indirect  2021-11-02   4y4m
-```
-
-Customize the threshold with a duration value:
-
-```
-$ modrot --stale=1y6m    # Stale if not pushed in 1 year 6 months
-$ modrot --stale=180d    # Stale if not pushed in 180 days
-```
-
-Stale detection is informational only and does not affect the exit code.
-
-### Markdown output
-
-Generate GitHub-Flavored Markdown tables for embedding in reports or issues:
+**Markdown:**
 
 ```
 $ modrot --markdown
@@ -386,40 +287,14 @@ $ modrot --markdown
 
 Combines with `--tree`, `--files`, `--stale`, and `--all`.
 
-### Mermaid diagrams
-
-Generate [Mermaid](https://mermaid.js.org/) flowchart diagrams showing dependency paths to archived modules:
+**Sorting** — sort archived dependencies by name (default), archive duration, or last push date:
 
 ```
-$ modrot --mermaid
-graph TD
-    root["mymodule"]
-    n0["github.com/Masterminds/sprig/v3@v3.2.3"]
-    n1["github.com/mitchellh/copystructure@v1.2.0"]:::archived
-    n2["github.com/mitchellh/reflectwalk@v1.0.2"]:::archived
-    root --> n0
-    n0 --> n1
-    n0 --> n2
-    classDef archived fill:#f96,stroke:#333,stroke-width:2px
-    classDef deprecated fill:#ff9,stroke:#333,stroke-width:2px
+$ modrot --sort=duration    # Longest archived first
+$ modrot --sort=pushed      # Least recently pushed first
 ```
 
-Only paths leading to archived or deprecated dependencies are included. Paste the output into any Mermaid-compatible renderer (GitHub, GitLab, Notion, etc.).
-
-### Quickfix output
-
-Generate editor-compatible quickfix output for navigating directly to files importing archived modules:
-
-```
-$ modrot --quickfix
-audit/hashstructure.go:14:github.com/mitchellh/copystructure
-sdk/logical/request.go:14:github.com/mitchellh/copystructure
-audit/hashstructure.go:15:github.com/mitchellh/reflectwalk
-```
-
-Use with vim: `vim -q <(modrot --quickfix)`
-
-### Ignoring dependencies
+### Filtering and ignoring
 
 Create a `.modrotignore` file next to your `go.mod` to exclude specific modules:
 
@@ -441,13 +316,37 @@ Override the ignore file path with `--ignore-file`:
 $ modrot --ignore-file path/to/ignorefile
 ```
 
-### Sorting
-
-Sort archived dependencies by name (default), archive duration, or last push date:
+Override the Go toolchain version used for `go mod graph` with `--go-version`:
 
 ```
-$ modrot --sort=duration    # Longest archived first
-$ modrot --sort=pushed      # Least recently pushed first
+$ modrot --tree --go-version 1.21.0
+```
+
+### Multi-module repos
+
+`--recursive` discovers all `go.mod` files in a directory tree, queries GitHub once for all unique repos, and outputs per-module results:
+
+```
+$ modrot --recursive --direct-only /path/to/project
+Found 10 go.mod files, checking 90 unique GitHub repos...
+=== api/go.mod — github.com/myorg/myapp/api/v2 ===
+
+No archived dependencies found among 11 github.com modules.
+
+=== go.mod — github.com/myorg/myapp ===
+
+ARCHIVED DEPENDENCIES (5 of 83 github.com modules)
+
+MODULE                                     VERSION   DIRECT  ARCHIVED AT  LAST PUSHED
+github.com/mitchellh/copystructure         v1.2.0    direct  2024-07-22   2021-05-05
+github.com/mitchellh/reflectwalk           v1.0.2    direct  2024-07-22   2022-04-21
+...
+```
+
+Skips `vendor/`, `testdata/`, and hidden directories. Combines with all other flags:
+
+```
+$ modrot --recursive --json --deprecated --resolve /path/to/monorepo
 ```
 
 ## Development
