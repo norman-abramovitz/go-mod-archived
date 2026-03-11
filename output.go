@@ -28,8 +28,11 @@ var (
 	staleDays    int
 )
 
-// sortMode controls the sort order for archived modules: "name", "duration", "pushed".
+// sortMode controls the sort field for archived modules: "name", "duration", "pushed".
 var sortMode = "name"
+
+// sortReverse reverses the sort direction when true (desc instead of asc).
+var sortReverse bool
 
 // fmtDate formats a time using the current dateFmt setting.
 func fmtDate(t time.Time) string {
@@ -202,7 +205,7 @@ func PrintStaleTable(stale []RepoStatus) {
 		if r.Module.Direct {
 			direct = "direct"
 		}
-		pushedAt := fmtDate(r.PushedAt)
+		pushedAt := colorize(fmtDate(r.PushedAt), r.PushedAt)
 		if durationEnabled {
 			dur := formatDurationShort(r.PushedAt)
 			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, pushedAt, dur)
@@ -213,12 +216,41 @@ func PrintStaleTable(stale []RepoStatus) {
 	_ = w.Flush()
 }
 
-// sortResults sorts a slice of RepoStatus based on the current sortMode.
+// parseSortFlag parses a sort flag value like "name", "pushed:asc", or "duration:desc"
+// into the sortMode and sortReverse globals.
+//
+// Default directions (when no suffix is given):
+//   - name: asc (A→Z)
+//   - duration: desc (archived longest ago first)
+//   - pushed: desc (pushed longest ago first)
+//
+// Appending the opposite suffix reverses the order.
+func parseSortFlag(val string) {
+	field, dir, hasSep := strings.Cut(val, ":")
+	sortMode = field
+	if !hasSep {
+		sortReverse = false // default direction for each field
+		return
+	}
+	switch field {
+	case "duration", "pushed":
+		// Default is desc (oldest first); :asc reverses to newest first
+		sortReverse = (dir == "asc")
+	default: // "name"
+		// Default is asc (A→Z); :desc reverses to Z→A
+		sortReverse = (dir == "desc")
+	}
+}
+
+// sortResults sorts a slice of RepoStatus based on the current sortMode and sortReverse.
 func sortResults(results []RepoStatus) {
 	switch sortMode {
 	case "duration":
 		sort.Slice(results, func(i, j int) bool {
-			// Oldest archived first (earliest ArchivedAt)
+			if sortReverse {
+				i, j = j, i
+			}
+			// Oldest archived first (earliest ArchivedAt) in asc order
 			if results[i].ArchivedAt.IsZero() && results[j].ArchivedAt.IsZero() {
 				return results[i].Module.Path < results[j].Module.Path
 			}
@@ -232,7 +264,10 @@ func sortResults(results []RepoStatus) {
 		})
 	case "pushed":
 		sort.Slice(results, func(i, j int) bool {
-			// Oldest pushed first (earliest PushedAt)
+			if sortReverse {
+				i, j = j, i
+			}
+			// Oldest pushed first (earliest PushedAt) in asc order
 			if results[i].PushedAt.IsZero() && results[j].PushedAt.IsZero() {
 				return results[i].Module.Path < results[j].Module.Path
 			}
@@ -246,6 +281,9 @@ func sortResults(results []RepoStatus) {
 		})
 	default: // "name"
 		sort.Slice(results, func(i, j int) bool {
+			if sortReverse {
+				i, j = j, i
+			}
 			return results[i].Module.Path < results[j].Module.Path
 		})
 	}
@@ -281,8 +319,8 @@ func printArchivedRows(w *tabwriter.Writer, archived []RepoStatus) {
 		if r.Module.Direct {
 			direct = "direct"
 		}
-		archivedAt := fmtDate(r.ArchivedAt)
-		pushedAt := fmtDate(r.PushedAt)
+		archivedAt := colorize(fmtDate(r.ArchivedAt), r.ArchivedAt)
+		pushedAt := colorize(fmtDate(r.PushedAt), r.PushedAt)
 		if durationEnabled {
 			dur := formatDuration(r.ArchivedAt)
 			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, archivedAt, dur, pushedAt)

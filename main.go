@@ -39,15 +39,17 @@ func main() {
 
 	// Display flags
 	allFlag := flag.Bool("all", false, "Show all modules, not just archived ones")
-	treeFlag := flag.Bool("tree", false, "Show dependency tree for archived modules (uses go mod graph)")
+	treeFlag := flag.Bool("tree", false, "Show ASCII dependency tree for archived modules (uses go mod graph)")
 	filesFlag := flag.Bool("files", false, "Show source files that import archived modules")
-	sortFlag := flag.String("sort", "name", "Sort order for archived modules: name, duration, pushed")
+	sortFlag := flag.String("sort", "name", "Sort: name[:asc|desc], duration[:asc|desc], pushed[:asc|desc]; name defaults asc, duration/pushed default desc")
 	timeFlag := flag.Bool("time", false, "Include time in date output (2006-01-02 15:04:05 instead of 2006-01-02)")
 
 	// Execution flags
 	workers := flag.Int("workers", 50, "Number of repos per GitHub GraphQL batch request")
 	goVersionFlag := flag.String("go-version", "", "Override the Go toolchain version from go.mod (e.g. 1.21.0)")
 	recursiveFlag := flag.Bool("recursive", false, "Scan all go.mod files in the directory tree")
+	noColorFlag := flag.Bool("no-color", false, "Disable colored output (also respects NO_COLOR env var)")
+	colorThresholdFlag := flag.String("color-threshold", "", "Age thresholds for color: 2–4 values (default: 3m,1y,2y,5y)")
 
 	// Info flags
 	versionFlag := flag.Bool("version", false, "Print version information and exit")
@@ -81,15 +83,20 @@ Analysis:
 
 Display:
   --all                 Show all modules, not just archived ones
-  --tree                Show dependency tree for archived modules (uses go mod graph)
+  --tree                Show ASCII dependency tree for archived modules (uses go mod graph)
   --files               Show source files that import archived modules (requires rg)
-  --sort string         Sort order for archived modules: name, duration, pushed (default "name")
+  --sort string         Sort: name[:asc|desc], duration[:asc|desc], pushed[:asc|desc]
+                          name defaults to asc (A-Z), duration and pushed default to desc (oldest first)
   --time                Include time in date output
 
 Execution:
   --workers int         Number of repos per GitHub GraphQL batch request (default 50)
   --go-version string   Override the Go toolchain version from go.mod
   --recursive           Scan all go.mod files in the directory tree (monorepos)
+  --no-color            Disable colored output (also respects NO_COLOR env var)
+  --color-threshold     Age thresholds: 2–4 comma-separated values (default: 3m,1y,2y,5y)
+                          2 values → 3 levels, 3 → 4 levels, 4 → 5 levels
+                          Symbols: ★ new  ◇ recent  ◆ moderate  ▲ old  ✖ critical
 
 Info:
   --version             Print version information and exit
@@ -101,7 +108,7 @@ Examples:
   modrot --direct-only --stale               Verify no archived or stale deps
   modrot --resolve --deprecated --stale      Full dependency health check
   modrot /path/to/pkg/go.mod --all --stale   Evaluate a package before adopting
-  modrot --tree --files                      Dependency paths and affected files
+  modrot --tree --files                      ASCII dependency tree and affected files
   modrot --markdown --all --deprecated       Markdown for release notes
   modrot --json | jq '.archived[].module'    Scripting with JSON output
   modrot --recursive /path/to/monorepo       Scan all go.mod files in a tree
@@ -142,8 +149,16 @@ Examples:
 		dateFmt = "2006-01-02 15:04:05"
 	}
 
-	// Set sort mode
-	sortMode = *sortFlag
+	// Set sort mode and direction (supports "field" or "field:asc" / "field:desc")
+	parseSortFlag(*sortFlag)
+
+	// Initialize color support (auto-detects terminal, respects NO_COLOR)
+	// Disable color for non-table formats (JSON, markdown, mermaid, quickfix)
+	noColor := *noColorFlag || outputFormat != "table"
+	if err := initColor(noColor, *colorThresholdFlag); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(2)
+	}
 
 	// Determine input path
 	inputPath := "."

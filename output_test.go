@@ -1891,6 +1891,104 @@ func TestSortResults_ByPushed(t *testing.T) {
 	}
 }
 
+func TestParseSortFlag(t *testing.T) {
+	tests := []struct {
+		input       string
+		wantMode    string
+		wantReverse bool
+	}{
+		{"name", "name", false},
+		{"duration", "duration", false},
+		{"pushed", "pushed", false},
+		{"name:asc", "name", false},
+		{"name:desc", "name", true},
+		{"pushed:desc", "pushed", false},
+		{"pushed:asc", "pushed", true},
+		{"duration:desc", "duration", false},
+		{"duration:asc", "duration", true},
+	}
+
+	savedSort := sortMode
+	savedReverse := sortReverse
+	defer func() { sortMode = savedSort; sortReverse = savedReverse }()
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			parseSortFlag(tt.input)
+			if sortMode != tt.wantMode {
+				t.Errorf("sortMode = %q, want %q", sortMode, tt.wantMode)
+			}
+			if sortReverse != tt.wantReverse {
+				t.Errorf("sortReverse = %v, want %v", sortReverse, tt.wantReverse)
+			}
+		})
+	}
+}
+
+func TestSortResults_ByNameDesc(t *testing.T) {
+	savedSort := sortMode
+	savedReverse := sortReverse
+	defer func() { sortMode = savedSort; sortReverse = savedReverse }()
+	sortMode = "name"
+	sortReverse = true
+
+	results := []RepoStatus{
+		{Module: Module{Path: "github.com/a/a"}},
+		{Module: Module{Path: "github.com/m/m"}},
+		{Module: Module{Path: "github.com/z/z"}},
+	}
+	sortResults(results)
+
+	if results[0].Module.Path != "github.com/z/z" {
+		t.Errorf("expected z/z first, got %s", results[0].Module.Path)
+	}
+	if results[2].Module.Path != "github.com/a/a" {
+		t.Errorf("expected a/a last, got %s", results[2].Module.Path)
+	}
+}
+
+func TestSortResults_ByDurationAsc(t *testing.T) {
+	savedSort := sortMode
+	savedReverse := sortReverse
+	defer func() { sortMode = savedSort; sortReverse = savedReverse }()
+	sortMode = "duration"
+	sortReverse = true // :asc reverses duration (newest archived first)
+
+	results := []RepoStatus{
+		{Module: Module{Path: "github.com/old/repo"}, ArchivedAt: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)},
+		{Module: Module{Path: "github.com/new/repo"}, ArchivedAt: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)},
+		{Module: Module{Path: "github.com/mid/repo"}, ArchivedAt: time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)},
+	}
+	sortResults(results)
+
+	// Newest archived first with duration:asc
+	if results[0].Module.Path != "github.com/new/repo" {
+		t.Errorf("expected new/repo first, got %s", results[0].Module.Path)
+	}
+	if results[2].Module.Path != "github.com/old/repo" {
+		t.Errorf("expected old/repo last, got %s", results[2].Module.Path)
+	}
+}
+
+func TestSortResults_ByPushedAsc(t *testing.T) {
+	savedSort := sortMode
+	savedReverse := sortReverse
+	defer func() { sortMode = savedSort; sortReverse = savedReverse }()
+	sortMode = "pushed"
+	sortReverse = true // :asc reverses pushed (most recently pushed first)
+
+	results := []RepoStatus{
+		{Module: Module{Path: "github.com/old/repo"}, PushedAt: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)},
+		{Module: Module{Path: "github.com/recent/repo"}, PushedAt: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)},
+	}
+	sortResults(results)
+
+	// Most recently pushed first with pushed:asc
+	if results[0].Module.Path != "github.com/recent/repo" {
+		t.Errorf("expected recent/repo first, got %s", results[0].Module.Path)
+	}
+}
+
 func TestPrintTable_Grouping(t *testing.T) {
 	results := []RepoStatus{
 		{

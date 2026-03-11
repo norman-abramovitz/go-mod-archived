@@ -73,9 +73,9 @@ If no path is given, looks for `go.mod` in the current directory. You can also p
 | Flag | Description |
 |------|-------------|
 | `--all` | Show all modules, not just archived ones |
-| `--tree` | Show dependency tree for archived modules (uses `go mod graph`) |
+| `--tree` | Show ASCII dependency tree for archived modules (uses `go mod graph`) |
 | `--files` | Show source files that import archived modules (requires `rg`) |
-| `--sort ORDER` | Sort archived modules: `name` (default), `duration`, `pushed` |
+| `--sort ORDER` | Sort: `name` (default asc), `duration` (default desc), `pushed` (default desc); append `:asc` or `:desc` to override |
 | `--time` | Include time in date output (2006-01-02 15:04:05 instead of 2006-01-02) |
 
 **Execution:**
@@ -85,6 +85,8 @@ If no path is given, looks for `go.mod` in the current directory. You can also p
 | `--workers N` | Repos per GitHub GraphQL batch request (default 50) |
 | `--go-version V` | Override the Go toolchain version from go.mod (e.g. `1.21.0`) |
 | `--recursive` | Scan all go.mod files in the directory tree |
+| `--no-color` | Disable colored output (also respects `NO_COLOR` env var) |
+| `--color-threshold T1,..,TN` | Age thresholds for color levels, 2–4 values (default: `3m,1y,2y,5y`) |
 
 **Info:**
 
@@ -166,7 +168,7 @@ These flags are independent and combine freely. Stale detection is informational
 
 ### Dependency paths and impact
 
-`--tree` shows which direct dependencies transitively pull in archived modules. `--files` shows which source files import them, helping prioritize replacements. These combine naturally:
+`--tree` shows an ASCII tree of which direct dependencies transitively pull in archived modules. `--files` shows which source files import them, helping prioritize replacements. These combine naturally:
 
 ```
 $ modrot --tree --files
@@ -287,12 +289,47 @@ $ modrot --markdown
 
 Combines with `--tree`, `--files`, `--stale`, and `--all`.
 
-**Sorting** — sort archived dependencies by name (default), archive duration, or last push date:
+**Sorting** — sort archived dependencies by field and direction. Append `:asc` or `:desc` to control order. Each field has a natural default:
+
+| Value | Result | Default? |
+|-------|--------|----------|
+| `name` | A→Z | yes (asc) |
+| `name:desc` | Z→A | |
+| `duration` | Archived longest ago first | yes (desc) |
+| `duration:asc` | Archived most recently first | |
+| `pushed` | Pushed longest ago first | yes (desc) |
+| `pushed:asc` | Pushed most recently first | |
 
 ```
-$ modrot --sort=duration    # Longest archived first
-$ modrot --sort=pushed      # Least recently pushed first
+$ modrot --sort=duration         # Archived longest ago → most recently (default desc)
+$ modrot --sort=duration:asc     # Archived most recently → longest ago
+$ modrot --sort=pushed           # Oldest push date → newest (default desc)
+$ modrot --sort=pushed:asc       # Newest push date → oldest
 ```
+
+**Color indicators** — in table output, dates are color-coded by age using a colorblind-safe palette with symbols for accessibility. Colors are auto-enabled when stdout is a terminal and can be disabled with `--no-color` or the `NO_COLOR` environment variable. Both ends are prominent to highlight new issues and long-standing risks.
+
+With the default thresholds (`3m,1y,2y,5y`), 5 levels are shown:
+
+| Age | Symbol | Color | Meaning |
+|-----|--------|-------|---------|
+| < 3 months | ★ | bold cyan | Just appeared — evaluate impact |
+| 3 months – 1 year | ◇ | cyan | Emerging — plan migration |
+| 1 – 2 years | ◆ | yellow | Established — known tech debt |
+| 2 – 5 years | ▲ | magenta | Growing concern — security risk |
+| > 5 years | ✖ | bold magenta underline | Long-standing — legacy burden |
+
+Provide 2–4 comma-separated thresholds to customize the number of levels:
+
+```
+$ modrot --color-threshold=3m,1y,2y,5y   # 5 levels (default)
+$ modrot --color-threshold=6m,1y,3y      # 4 levels
+$ modrot --color-threshold=1y,3y         # 3 levels
+$ modrot --no-color                      # Disable colors entirely
+$ NO_COLOR=1 modrot                      # Also disables colors
+```
+
+Colors apply to archived and stale table output only (not JSON, markdown, mermaid, or quickfix).
 
 ### Filtering and ignoring
 

@@ -23,7 +23,7 @@ type runConfig struct {
 	goToolchain    string // e.g. "go1.23.4" from `go version`
 	durationMode   bool
 	durationDate   time.Time
-	sortMode       string // "name", "duration", or "pushed"
+	sortMode       string // e.g. "name", "pushed:desc"
 	ignoreFile     string
 	ignoreInline   string
 }
