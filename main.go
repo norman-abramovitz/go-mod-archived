@@ -32,6 +32,8 @@ func main() {
 	directOnly := flag.Bool("direct-only", false, "Only check direct dependencies")
 	ignoreFileFlag := flag.String("ignore-file", "", "Path to ignore file (default: .modrotignore next to go.mod)")
 	ignoreFlag := flag.String("ignore", "", "Comma-separated list of module paths to ignore")
+	showIgnoredFlag := flag.Bool("show-ignored", false, "Show ignored modules and their current state")
+	noIgnoreFlag := flag.Bool("no-ignore", false, "Disable ignore lists (.modrotignore and --ignore)")
 
 	// Analysis flags
 	resolveFlag := flag.Bool("resolve", false, "Resolve vanity import paths (e.g. google.golang.org/grpc) to GitHub repos")
@@ -74,6 +76,8 @@ Filtering:
   --direct-only         Only check direct dependencies (useful for CI)
   --ignore-file string  Path to ignore file (default: .modrotignore next to go.mod)
   --ignore string       Comma-separated list of module paths to ignore
+  --show-ignored        Show ignored modules and their current state
+  --no-ignore           Disable ignore lists (.modrotignore and --ignore)
   --stale[=THRESHOLD]   Show dependencies not pushed in >THRESHOLD (default: 2y, e.g. 1y6m, 180d)
 
 Analysis:
@@ -259,30 +263,32 @@ Examples:
 		os.Exit(2)
 	}
 
-	// Apply ignore list
-	ignoreList := NewIgnoreList()
-	ignoreFilePath := *ignoreFileFlag
-	if ignoreFilePath == "" {
-		ignoreFilePath = filepath.Join(filepath.Dir(gomodPath), ".modrotignore")
-	}
-	if il, err := LoadIgnoreFile(ignoreFilePath); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not read ignore file: %v\n", err)
-	} else {
-		for p := range il.paths {
-			ignoreList.Add(p)
+	// Apply ignore list (unless --no-ignore is set)
+	var ignoredResults []RepoStatus
+	if !*noIgnoreFlag {
+		ignoreList := NewIgnoreList()
+		ignoreFilePath := *ignoreFileFlag
+		if ignoreFilePath == "" {
+			ignoreFilePath = filepath.Join(filepath.Dir(gomodPath), ".modrotignore")
 		}
-	}
-	if *ignoreFlag != "" {
-		inline := ParseIgnoreList(*ignoreFlag)
-		for p := range inline.paths {
-			ignoreList.Add(p)
+		if il, err := LoadIgnoreFile(ignoreFilePath); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not read ignore file: %v\n", err)
+		} else {
+			for p := range il.paths {
+				ignoreList.Add(p)
+			}
 		}
-	}
-	if ignoreList.Len() > 0 {
-		var ignored []RepoStatus
-		results, ignored = ignoreList.FilterResults(results)
-		if len(ignored) > 0 {
-			fmt.Fprintf(os.Stderr, "Ignored %d %s.\n", len(ignored), pluralize(len(ignored), "module", "modules"))
+		if *ignoreFlag != "" {
+			inline := ParseIgnoreList(*ignoreFlag)
+			for p := range inline.paths {
+				ignoreList.Add(p)
+			}
+		}
+		if ignoreList.Len() > 0 {
+			results, ignoredResults = ignoreList.FilterResults(results)
+			if len(ignoredResults) > 0 && !*showIgnoredFlag {
+				fmt.Fprintf(os.Stderr, "Ignored %d %s.\n", len(ignoredResults), pluralize(len(ignoredResults), "module", "modules"))
+			}
 		}
 	}
 
@@ -356,6 +362,9 @@ Examples:
 				if len(nonGitHubModules) > 0 {
 					PrintSkippedTable(nonGitHubModules)
 				}
+				if *showIgnoredFlag {
+					PrintIgnoredTable(ignoredResults)
+				}
 			}
 			if hasArchived {
 				os.Exit(1)
@@ -390,6 +399,10 @@ Examples:
 		}
 	}
 
+	if *showIgnoredFlag {
+		PrintIgnoredTable(ignoredResults)
+	}
+
 	if hasArchived {
 		os.Exit(1)
 	}
@@ -403,6 +416,7 @@ var valueFlagNames = map[string]bool{
 	"-ignore-file": true, "--ignore-file": true,
 	"-ignore": true, "--ignore": true,
 	"-format": true, "--format": true,
+	"-color-threshold": true, "--color-threshold": true,
 }
 
 // reorderArgs moves flags after positional arguments to before them,

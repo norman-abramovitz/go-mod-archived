@@ -58,6 +58,8 @@ If no path is given, looks for `go.mod` in the current directory. You can also p
 | `--direct-only` | Only check direct dependencies (skip indirect) |
 | `--ignore-file PATH` | Path to ignore file (default: `.modrotignore` next to `go.mod`) |
 | `--ignore MODULES` | Comma-separated list of module paths to ignore |
+| `--show-ignored` | Show ignored modules and their current state |
+| `--no-ignore` | Disable ignore lists (`.modrotignore` and `--ignore`) |
 | `--stale[=THRESHOLD]` | Show dependencies not pushed in >THRESHOLD (default: `2y`, e.g. `1y6m`, `180d`) |
 
 **Analysis:**
@@ -351,6 +353,18 @@ Override the ignore file path with `--ignore-file`:
 
 ```
 $ modrot --ignore-file path/to/ignorefile
+```
+
+Use `--show-ignored` to see what's being ignored and whether those modules are still active or have been archived:
+
+```
+$ modrot --show-ignored
+```
+
+Use `--no-ignore` to temporarily disable all ignore lists and see the full unfiltered results:
+
+```
+$ modrot --no-ignore
 ```
 
 Override the Go toolchain version used for `go mod graph` with `--go-version`:

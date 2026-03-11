@@ -2046,3 +2046,46 @@ func TestFormatThreshold(t *testing.T) {
 		t.Errorf("formatThreshold() = %q, want %q", got, "180d")
 	}
 }
+
+func TestPrintIgnoredTable(t *testing.T) {
+	ignored := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/pkg/errors", Version: "v0.9.1", Direct: false},
+			IsArchived: true,
+			ArchivedAt: time.Date(2021, 12, 1, 0, 0, 0, 0, time.UTC),
+			PushedAt:   time.Date(2021, 11, 2, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			Module:     Module{Path: "github.com/foo/bar", Version: "v1.0.0", Direct: true},
+			IsArchived: false,
+			PushedAt:   time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	output := captureStdout(t, func() {
+		PrintIgnoredTable(ignored)
+	})
+
+	if !strings.Contains(output, "github.com/pkg/errors") {
+		t.Error("expected pkg/errors in output")
+	}
+	if !strings.Contains(output, "archived") {
+		t.Error("expected 'archived' status in output")
+	}
+	if !strings.Contains(output, "active") {
+		t.Error("expected 'active' status in output")
+	}
+	if !strings.Contains(output, "2021-12-01") {
+		t.Error("expected archived date in output")
+	}
+}
+
+func TestPrintIgnoredTable_Empty(t *testing.T) {
+	output := captureStdout(t, func() {
+		PrintIgnoredTable(nil)
+	})
+
+	if output != "" {
+		t.Errorf("expected no output for empty ignored list, got %q", output)
+	}
+}

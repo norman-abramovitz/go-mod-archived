@@ -216,6 +216,41 @@ func PrintStaleTable(stale []RepoStatus) {
 	_ = w.Flush()
 }
 
+// PrintIgnoredTable outputs a section listing ignored modules and their current state.
+func PrintIgnoredTable(ignored []RepoStatus) {
+	if len(ignored) == 0 {
+		return
+	}
+	sort.Slice(ignored, func(i, j int) bool {
+		return ignored[i].Module.Path < ignored[j].Module.Path
+	})
+	_, _ = fmt.Fprintf(os.Stderr, "\nIGNORED MODULES (%d %s)\n\n",
+		len(ignored), pluralize(len(ignored), "module", "modules"))
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT\tSTATUS\tARCHIVED AT\tLAST PUSHED")
+	for _, r := range ignored {
+		direct := "indirect"
+		if r.Module.Direct {
+			direct = "direct"
+		}
+		status := "active"
+		if r.IsArchived {
+			status = "archived"
+		}
+		archivedAt := ""
+		if !r.ArchivedAt.IsZero() {
+			archivedAt = fmtDate(r.ArchivedAt)
+		}
+		pushedAt := ""
+		if !r.PushedAt.IsZero() {
+			pushedAt = fmtDate(r.PushedAt)
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			r.Module.Path, r.Module.Version, direct, status, archivedAt, pushedAt)
+	}
+	_ = w.Flush()
+}
+
 // parseSortFlag parses a sort flag value like "name", "pushed:asc", or "duration:desc"
 // into the sortMode and sortReverse globals.
 //
