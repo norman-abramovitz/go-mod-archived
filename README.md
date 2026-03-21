@@ -263,6 +263,50 @@ $ modrot /path/to/candidate/go.mod --resolve --deprecated --stale
 $ modrot --all /path/to/candidate/go.mod    # See every dependency's status
 ```
 
+### Security audit
+
+Archived dependencies no longer receive security patches. Combine flags for a comprehensive security-focused assessment:
+
+```
+$ modrot --resolve --deprecated --stale=6m --direct-only --freshness --age=1y
+```
+
+This checks direct dependencies for: archived repos (no patches), deprecated modules (known replacements exist), stale repos (no activity in 6 months), outdated versions (behind latest by time), and old versions (published over a year ago).
+
+### Technical debt tracking
+
+Run modrot periodically and save JSON snapshots to track dependency health over time:
+
+```
+$ modrot --resolve --deprecated --stale --freshness --json > reports/deps-$(date +%Y-%m-%d).json
+```
+
+Compare snapshots to see if debt is accumulating or being paid down. Use `jq` to extract trends:
+
+```
+$ jq '.archived | length' reports/deps-*.json
+```
+
+### Migration planning
+
+When replacing an archived dependency, use `--tree --files` to understand the full impact:
+
+```
+$ modrot --tree --files --deprecated
+```
+
+`--tree` shows which direct dependencies transitively pull in the archived module. `--files` shows every source file that imports it. `--deprecated` shows the recommended replacement when available. Together they give you the scope of work before starting.
+
+### Vendor evaluation
+
+Before adopting a new library, check its dependency health:
+
+```
+$ modrot /path/to/candidate/go.mod --resolve --deprecated --stale --freshness --age=1y --all
+```
+
+Look for: archived direct dependencies (immediate risk), stale dependencies (may become archived), deprecated modules (migration debt you'd inherit), and old versions (maintainer may not be keeping up).
+
 ### CI/CD integration
 
 modrot exits 1 when archived dependencies are found, making it a natural CI gate:
@@ -383,12 +427,12 @@ Colors apply to archived and stale table output only (not JSON, markdown, mermai
 
 ### Filtering and ignoring
 
-Create a `.modrotignore` file next to your `go.mod` to exclude specific modules:
+Create a `.modrotignore` file next to your `go.mod` to exclude specific modules. Add an inline comment after `#` to document why each module is ignored — these reasons are shown by `--show-ignored`:
 
 ```
 # Modules we've evaluated and accepted
-github.com/pkg/errors
-github.com/mitchellh/mapstructure
+github.com/pkg/errors              # Vendored replacement available
+github.com/mitchellh/mapstructure  # Evaluated 2026-01: no security impact
 ```
 
 Or use inline ignore:
@@ -447,6 +491,18 @@ Skips `vendor/`, `testdata/`, and hidden directories. Combines with all other fl
 ```
 $ modrot --recursive --json --deprecated --resolve /path/to/monorepo
 ```
+
+### Portfolio-wide scanning
+
+To scan multiple independent repos, loop over them and aggregate JSON output:
+
+```bash
+for repo in ~/Projects/*/go.mod; do
+  modrot --json --resolve --deprecated "$repo" 2>/dev/null
+done | jq -s '[.[].archived[]] | group_by(.module) | map({module: .[0].module, count: length}) | sort_by(-.count)'
+```
+
+This identifies the most common archived dependencies across your portfolio. For repos that are monorepos, add `--recursive` to scan all go.mod files within each repo.
 
 ## Troubleshooting
 

@@ -293,17 +293,34 @@ func PrintOutdatedTable(results []RepoStatus, nonGHModules []Module) {
 }
 
 // PrintIgnoredTable outputs a section listing ignored modules and their current state.
-func PrintIgnoredTable(ignored []RepoStatus) {
+// If ignoreList is provided, reasons from .modrotignore inline comments are shown.
+func PrintIgnoredTable(ignored []RepoStatus, ignoreList *IgnoreList) {
 	if len(ignored) == 0 {
 		return
 	}
 	sort.Slice(ignored, func(i, j int) bool {
 		return ignored[i].Module.Path < ignored[j].Module.Path
 	})
+
+	// Check if any entries have reasons
+	hasReasons := false
+	if ignoreList != nil {
+		for _, r := range ignored {
+			if ignoreList.Reason(r.Module.Path) != "" {
+				hasReasons = true
+				break
+			}
+		}
+	}
+
 	_, _ = fmt.Fprintf(os.Stderr, "\nIGNORED MODULES (%d %s)\n\n",
 		len(ignored), pluralize(len(ignored), "module", "modules"))
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT\tSTATUS\tARCHIVED AT\tLAST PUSHED")
+	if hasReasons {
+		_, _ = fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT\tSTATUS\tARCHIVED AT\tLAST PUSHED\tREASON")
+	} else {
+		_, _ = fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT\tSTATUS\tARCHIVED AT\tLAST PUSHED")
+	}
 	for _, r := range ignored {
 		direct := "indirect"
 		if r.Module.Direct {
@@ -321,8 +338,17 @@ func PrintIgnoredTable(ignored []RepoStatus) {
 		if !r.PushedAt.IsZero() {
 			pushedAt = fmtDate(r.PushedAt)
 		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			r.Module.Path, r.Module.Version, direct, status, archivedAt, pushedAt)
+		if hasReasons {
+			reason := ""
+			if ignoreList != nil {
+				reason = ignoreList.Reason(r.Module.Path)
+			}
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				r.Module.Path, r.Module.Version, direct, status, archivedAt, pushedAt, reason)
+		} else {
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+				r.Module.Path, r.Module.Version, direct, status, archivedAt, pushedAt)
+		}
 	}
 	_ = w.Flush()
 }

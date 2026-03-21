@@ -6,28 +6,43 @@ import (
 	"strings"
 )
 
-// IgnoreList holds module paths that should be excluded from results.
+// IgnoreList holds module paths that should be excluded from results,
+// with optional reasons for each entry.
 type IgnoreList struct {
-	paths map[string]bool
+	paths map[string]string // module path → reason (empty string if no reason)
 }
 
 // NewIgnoreList creates an empty IgnoreList.
 func NewIgnoreList() *IgnoreList {
-	return &IgnoreList{paths: make(map[string]bool)}
+	return &IgnoreList{paths: make(map[string]string)}
 }
 
-// Add adds one or more module paths to the ignore list.
+// Add adds one or more module paths to the ignore list with no reason.
 func (il *IgnoreList) Add(paths ...string) {
 	for _, p := range paths {
 		p = strings.TrimSpace(p)
 		if p != "" {
-			il.paths[p] = true
+			il.paths[p] = ""
 		}
+	}
+}
+
+// AddWithReason adds a module path with an optional reason.
+func (il *IgnoreList) AddWithReason(path, reason string) {
+	path = strings.TrimSpace(path)
+	if path != "" {
+		il.paths[path] = reason
 	}
 }
 
 // IsIgnored returns true if the module path is in the ignore list.
 func (il *IgnoreList) IsIgnored(modulePath string) bool {
+	_, ok := il.paths[modulePath]
+	return ok
+}
+
+// Reason returns the reason for ignoring a module path, or empty string.
+func (il *IgnoreList) Reason(modulePath string) string {
 	return il.paths[modulePath]
 }
 
@@ -51,6 +66,9 @@ func (il *IgnoreList) FilterResults(results []RepoStatus) (filtered, ignored []R
 // LoadIgnoreFile reads a .modrotignore file and returns an IgnoreList.
 // Returns an empty list (not an error) if the file doesn't exist.
 // Format: one module path per line, # comments, blank lines skipped.
+// Inline comments after a module path are stored as the reason:
+//
+//	github.com/pkg/errors  # Vendored replacement available
 func LoadIgnoreFile(path string) (*IgnoreList, error) {
 	il := NewIgnoreList()
 
@@ -69,7 +87,16 @@ func LoadIgnoreFile(path string) (*IgnoreList, error) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		il.Add(line)
+		// Split on inline comment: "module/path  # reason"
+		modPath := line
+		reason := ""
+		if idx := strings.Index(line, "#"); idx >= 0 {
+			modPath = strings.TrimSpace(line[:idx])
+			reason = strings.TrimSpace(line[idx+1:])
+		}
+		if modPath != "" {
+			il.AddWithReason(modPath, reason)
+		}
 	}
 	return il, scanner.Err()
 }
@@ -95,8 +122,8 @@ func BuildIgnoreList(gomodDir, ignoreFile, ignoreInline string) *IgnoreList {
 		filePath = gomodDir + "/.modrotignore"
 	}
 	if il, err := LoadIgnoreFile(filePath); err == nil {
-		for p := range il.paths {
-			ignoreList.Add(p)
+		for p, reason := range il.paths {
+			ignoreList.AddWithReason(p, reason)
 		}
 	}
 	if ignoreInline != "" {

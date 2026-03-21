@@ -2063,7 +2063,7 @@ func TestPrintIgnoredTable(t *testing.T) {
 	}
 
 	output := captureStdout(t, func() {
-		PrintIgnoredTable(ignored)
+		PrintIgnoredTable(ignored, nil)
 	})
 
 	if !strings.Contains(output, "github.com/pkg/errors") {
@@ -2080,9 +2080,34 @@ func TestPrintIgnoredTable(t *testing.T) {
 	}
 }
 
+func TestPrintIgnoredTable_WithReasons(t *testing.T) {
+	ignored := []RepoStatus{
+		{
+			Module:     Module{Path: "github.com/pkg/errors", Version: "v0.9.1", Direct: false},
+			IsArchived: true,
+			ArchivedAt: time.Date(2021, 12, 1, 0, 0, 0, 0, time.UTC),
+			PushedAt:   time.Date(2021, 11, 2, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	il := NewIgnoreList()
+	il.AddWithReason("github.com/pkg/errors", "Vendored replacement available")
+
+	output := captureStdout(t, func() {
+		PrintIgnoredTable(ignored, il)
+	})
+
+	if !strings.Contains(output, "REASON") {
+		t.Error("expected REASON header")
+	}
+	if !strings.Contains(output, "Vendored replacement available") {
+		t.Error("expected reason text in output")
+	}
+}
+
 func TestPrintIgnoredTable_Empty(t *testing.T) {
 	output := captureStdout(t, func() {
-		PrintIgnoredTable(nil)
+		PrintIgnoredTable(nil, nil)
 	})
 
 	if output != "" {

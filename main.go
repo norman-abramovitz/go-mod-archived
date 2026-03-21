@@ -293,8 +293,8 @@ Examples:
 
 	// Apply ignore list (unless --no-ignore is set)
 	var ignoredResults []RepoStatus
+	ignoreList := NewIgnoreList()
 	if !*noIgnoreFlag {
-		ignoreList := NewIgnoreList()
 		ignoreFilePath := *ignoreFileFlag
 		if ignoreFilePath == "" {
 			ignoreFilePath = filepath.Join(filepath.Dir(gomodPath), ".modrotignore")
@@ -302,8 +302,8 @@ Examples:
 		if il, err := LoadIgnoreFile(ignoreFilePath); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not read ignore file: %v\n", err)
 		} else {
-			for p := range il.paths {
-				ignoreList.Add(p)
+			for p, reason := range il.paths {
+				ignoreList.AddWithReason(p, reason)
 			}
 		}
 		if *ignoreFlag != "" {
@@ -394,7 +394,7 @@ Examples:
 					PrintOutdatedTable(results, nonGitHubModules)
 				}
 				if *showIgnoredFlag {
-					PrintIgnoredTable(ignoredResults)
+					PrintIgnoredTable(ignoredResults, ignoreList)
 				}
 			}
 			if hasArchived {
@@ -435,7 +435,7 @@ Examples:
 	}
 
 	if *showIgnoredFlag {
-		PrintIgnoredTable(ignoredResults)
+		PrintIgnoredTable(ignoredResults, ignoreList)
 	}
 
 	if hasArchived {
