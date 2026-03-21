@@ -47,6 +47,7 @@ func main() {
 	filesFlag := flag.Bool("files", false, "Show source files that import archived modules")
 	sortFlag := flag.String("sort", "name", "Sort: name[:asc|desc], duration[:asc|desc], pushed[:asc|desc]; name defaults asc, duration/pushed default desc")
 	timeFlag := flag.Bool("time", false, "Include time in date output (2006-01-02 15:04:05 instead of 2006-01-02)")
+	statsFlag := flag.Bool("stats", false, "Show summary statistics (counts, age distribution, direct vs indirect)")
 
 	// Execution flags
 	workers := flag.Int("workers", 50, "Number of repos per GitHub GraphQL batch request")
@@ -97,6 +98,7 @@ Display:
   --sort string         Sort: name[:asc|desc], duration[:asc|desc], pushed[:asc|desc]
                           name defaults to asc (A-Z), duration and pushed default to desc (oldest first)
   --time                Include time in date output
+  --stats               Show summary statistics (counts, age distribution, direct vs indirect)
 
 Execution:
   --workers int         Number of repos per GitHub GraphQL batch request (default 50)
@@ -396,6 +398,9 @@ Examples:
 				if *showIgnoredFlag {
 					PrintIgnoredTable(ignoredResults, ignoreList)
 				}
+				if *statsFlag {
+					PrintStats(results, nonGitHubModules, stale, deprecatedModules, *directOnly)
+				}
 			}
 			if hasArchived {
 				os.Exit(1)
@@ -436,6 +441,10 @@ Examples:
 
 	if *showIgnoredFlag {
 		PrintIgnoredTable(ignoredResults, ignoreList)
+	}
+
+	if *statsFlag {
+		PrintStats(results, nonGitHubModules, stale, deprecatedModules, *directOnly)
 	}
 
 	if hasArchived {
