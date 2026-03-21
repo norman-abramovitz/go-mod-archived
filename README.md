@@ -318,6 +318,18 @@ modrot exits 1 when archived dependencies are found, making it a natural CI gate
   run: modrot --direct-only
 ```
 
+**Testing strategies when incorporating tools that depend on external APIs:**
+
+Tools like modrot require API access (GitHub) to produce full results. There are three approaches for CI integration:
+
+1. **Structure validation (no API needed)** — verify the tool parses input correctly, produces valid output formats, and handles flags. Tests the tool without network access. Best for: unit tests, PR checks, fast feedback.
+
+2. **Live API with skip control** — run the tool with real API access but gate with an environment variable (e.g. `MODROT_SKIP_CI=true`). Requires authentication in CI. Best for: scheduled full scans, release gates.
+
+3. **Mock API responses** — inject test servers returning known responses. Tests the full pipeline without network dependency. Best for: integration tests that need deterministic results.
+
+Most CI setups combine approach 1 (always runs, fast) with approach 2 (scheduled or on-demand, requires auth). Use environment variables to control execution, or `[skip ci]` in commit messages to bypass entire workflows.
+
 **Markdown output for release notes:**
 
 ```bash
