@@ -12,10 +12,11 @@ import (
 )
 
 func main() {
-	// Extract --duration and --stale before reorderArgs and flag.Parse,
+	// Extract --duration, --stale, and --freshness before reorderArgs and flag.Parse,
 	// since they support optional values which Go's flag package cannot handle.
 	extractDurationFlag()
 	extractStaleFlag()
+	extractFreshnessFlag()
 
 	// Reorder args so flags can appear after the positional argument.
 	// Go's flag package stops parsing at the first non-flag argument.
@@ -83,6 +84,8 @@ Filtering:
 Analysis:
   --resolve             Resolve vanity import paths to GitHub repos (recommended)
   --deprecated          Check for deprecated modules via the Go module proxy
+  --freshness[=THRESHOLD]  Show version freshness; with threshold, only deps older than THRESHOLD
+                          (e.g. --freshness=18m, --freshness=1y6m)
   --duration[=DATE]     Show how long dependencies have been archived (default: today)
 
 Display:
@@ -111,6 +114,7 @@ Examples:
   modrot --direct-only                       Direct dependencies only
   modrot --direct-only --stale               Verify no archived or stale deps
   modrot --resolve --deprecated --stale      Full dependency health check
+  modrot --freshness --all                   Show version freshness for all deps
   modrot /path/to/pkg/go.mod --all --stale   Evaluate a package before adopting
   modrot --tree --files                      ASCII dependency tree and affected files
   modrot --markdown --all --deprecated       Markdown for release notes
@@ -193,6 +197,7 @@ Examples:
 			filesMode:      *filesFlag,
 			resolveMode:    *resolveFlag,
 			deprecatedMode: *deprecatedFlag,
+			freshnessMode:  freshnessEnabled,
 			goVersion:      *goVersionFlag,
 			goToolchain:    goToolchainVersion(),
 			durationMode:   durationEnabled,
@@ -247,6 +252,11 @@ Examples:
 	// Enrich non-GitHub modules with proxy data
 	if len(nonGitHubModules) > 0 {
 		EnrichNonGitHub(nonGitHubModules, 20)
+	}
+
+	// Enrich all modules with freshness data (skips already-enriched)
+	if freshnessEnabled {
+		EnrichFreshness(allModules, 20)
 	}
 
 	if len(githubModules) == 0 {
@@ -362,6 +372,9 @@ Examples:
 				if len(nonGitHubModules) > 0 {
 					PrintSkippedTable(nonGitHubModules)
 				}
+				if freshnessEnabled {
+					PrintFreshnessTable(results, nonGitHubModules)
+				}
 				if *showIgnoredFlag {
 					PrintIgnoredTable(ignoredResults)
 				}
@@ -397,6 +410,10 @@ Examples:
 		if len(stale) > 0 {
 			PrintStaleTable(stale)
 		}
+	}
+
+	if freshnessEnabled {
+		PrintFreshnessTable(results, nonGitHubModules)
 	}
 
 	if *showIgnoredFlag {
@@ -523,6 +540,34 @@ func extractStaleFlag() {
 			if durationEndDate.IsZero() {
 				durationEndDate = time.Now()
 			}
+		default:
+			filtered = append(filtered, arg)
+		}
+	}
+	os.Args = filtered
+}
+
+// extractFreshnessFlag scans os.Args for --freshness or -freshness, which supports
+// an optional threshold value (--freshness or --freshness=1y6m). When a threshold
+// is given, only dependencies with a version publish date older than the threshold
+// are shown in freshness output.
+func extractFreshnessFlag() {
+	var filtered []string
+	for _, arg := range os.Args {
+		switch {
+		case arg == "--freshness" || arg == "-freshness":
+			freshnessEnabled = true
+		case strings.HasPrefix(arg, "--freshness=") || strings.HasPrefix(arg, "-freshness="):
+			freshnessEnabled = true
+			threshStr := arg[strings.Index(arg, "=")+1:]
+			y, m, d, err := parseThreshold(threshStr)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: invalid freshness threshold %q (expected e.g. 1y6m, 18m, 180d)\n", threshStr)
+				os.Exit(2)
+			}
+			freshnessYears = y
+			freshnessMonths = m
+			freshnessDays = d
 		default:
 			filtered = append(filtered, arg)
 		}

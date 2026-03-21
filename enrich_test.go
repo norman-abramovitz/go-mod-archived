@@ -59,7 +59,7 @@ func TestFetchLatestInfo(t *testing.T) {
 			defer srv.Close()
 
 			r := &resolver{client: srv.Client(), proxyBaseURL: srv.URL}
-			version, sourceURL := r.fetchLatestInfo("golang.org/x/mod")
+			version, _, sourceURL := r.fetchLatestInfo("golang.org/x/mod")
 			if version != tt.wantVersion {
 				t.Errorf("version = %q, want %q", version, tt.wantVersion)
 			}
@@ -79,7 +79,7 @@ func TestFetchLatestInfo_CorrectURL(t *testing.T) {
 	defer srv.Close()
 
 	r := &resolver{client: srv.Client(), proxyBaseURL: srv.URL}
-	r.fetchLatestInfo("golang.org/x/mod")
+	_, _, _ = r.fetchLatestInfo("golang.org/x/mod")
 
 	wantPath := "/golang.org/x/mod/@latest"
 	if gotPath != wantPath {
@@ -178,7 +178,7 @@ func TestEnrichNonGitHub(t *testing.T) {
 		if modules[i].Owner != "" {
 			continue
 		}
-		modules[i].LatestVersion, modules[i].SourceURL = r.fetchLatestInfo(modules[i].Path)
+		modules[i].LatestVersion, modules[i].LatestTime, modules[i].SourceURL = r.fetchLatestInfo(modules[i].Path)
 		modules[i].VersionTime = r.fetchVersionInfo(modules[i].Path, modules[i].Version)
 	}
 
@@ -221,7 +221,7 @@ func TestEnrichNonGitHub_ProxyError(t *testing.T) {
 	r := &resolver{client: srv.Client(), proxyBaseURL: srv.URL}
 
 	// Should not panic, should leave fields empty
-	modules[0].LatestVersion, modules[0].SourceURL = r.fetchLatestInfo(modules[0].Path)
+	modules[0].LatestVersion, modules[0].LatestTime, modules[0].SourceURL = r.fetchLatestInfo(modules[0].Path)
 	modules[0].VersionTime = r.fetchVersionInfo(modules[0].Path, modules[0].Version)
 
 	if modules[0].LatestVersion != "" {

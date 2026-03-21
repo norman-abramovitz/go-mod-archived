@@ -19,6 +19,7 @@ type runConfig struct {
 	filesMode      bool
 	resolveMode    bool
 	deprecatedMode bool
+	freshnessMode  bool
 	goVersion      string
 	goToolchain    string // e.g. "go1.23.4" from `go version`
 	durationMode   bool
@@ -178,6 +179,11 @@ func runRecursive(rootDir string, cfg runConfig) int {
 
 	// Phase 3.5: Enrich non-GitHub modules with proxy data
 	enrichAcrossModules(modules)
+
+	// Phase 3.6: Enrich all modules with freshness data (skips already-enriched)
+	if cfg.freshnessMode {
+		enrichFreshnessAcrossModules(modules)
+	}
 
 	if len(modules) == 0 {
 		_, _ = fmt.Fprintf(os.Stderr, "No valid go.mod files found.\n")

@@ -19,6 +19,7 @@ type Module struct {
 	Deprecated    string    // deprecation message from go.mod, empty if not deprecated
 	LatestVersion string    // latest version from proxy (empty if unavailable)
 	VersionTime   time.Time // publish time of current version from proxy
+	LatestTime    time.Time // publish time of latest version from proxy
 	SourceURL     string    // VCS URL from proxy Origin.URL
 }
 

@@ -56,8 +56,12 @@ func PrintMarkdown(results []RepoStatus, nonGitHubModules []Module, showAll bool
 		_, _ = fmt.Fprintf(os.Stdout, "## ARCHIVED DEPENDENCIES (%d of %d github.com modules)\n\n", len(archived), totalChecked)
 
 		var headers []string
-		if durationEnabled {
+		if durationEnabled && freshnessEnabled {
+			headers = []string{"Module", "Version", "Direct", "Archived At", "Duration", "Last Pushed", "Latest", "Behind"}
+		} else if durationEnabled {
 			headers = []string{"Module", "Version", "Direct", "Archived At", "Duration", "Last Pushed"}
+		} else if freshnessEnabled {
+			headers = []string{"Module", "Version", "Direct", "Archived At", "Last Pushed", "Latest", "Behind"}
 		} else {
 			headers = []string{"Module", "Version", "Direct", "Archived At", "Last Pushed"}
 		}
@@ -69,10 +73,25 @@ func PrintMarkdown(results []RepoStatus, nonGitHubModules []Module, showAll bool
 				if r.Module.Direct {
 					direct = "direct"
 				}
-				if durationEnabled {
+				latest := r.Module.LatestVersion
+				if latest != "" && latest == r.Module.Version {
+					latest = "-"
+				}
+				behind := formatVersionAge(r.Module)
+				if durationEnabled && freshnessEnabled {
+					rows = append(rows, []string{
+						r.Module.Path, r.Module.Version, direct,
+						fmtDate(r.ArchivedAt), formatDuration(r.ArchivedAt), fmtDate(r.PushedAt), latest, behind,
+					})
+				} else if durationEnabled {
 					rows = append(rows, []string{
 						r.Module.Path, r.Module.Version, direct,
 						fmtDate(r.ArchivedAt), formatDuration(r.ArchivedAt), fmtDate(r.PushedAt),
+					})
+				} else if freshnessEnabled {
+					rows = append(rows, []string{
+						r.Module.Path, r.Module.Version, direct,
+						fmtDate(r.ArchivedAt), fmtDate(r.PushedAt), latest, behind,
 					})
 				} else {
 					rows = append(rows, []string{
@@ -109,14 +128,28 @@ func PrintMarkdown(results []RepoStatus, nonGitHubModules []Module, showAll bool
 		sort.Slice(active, func(i, j int) bool {
 			return active[i].Module.Path < active[j].Module.Path
 		})
-		headers := []string{"Module", "Version", "Direct", "Last Pushed"}
+		var headers []string
+		if freshnessEnabled {
+			headers = []string{"Module", "Version", "Direct", "Last Pushed", "Latest", "Behind"}
+		} else {
+			headers = []string{"Module", "Version", "Direct", "Last Pushed"}
+		}
 		var rows [][]string
 		for _, r := range active {
 			direct := "indirect"
 			if r.Module.Direct {
 				direct = "direct"
 			}
-			rows = append(rows, []string{r.Module.Path, r.Module.Version, direct, fmtDate(r.PushedAt)})
+			if freshnessEnabled {
+				latest := r.Module.LatestVersion
+				if latest != "" && latest == r.Module.Version {
+					latest = "-"
+				}
+				behind := formatVersionAge(r.Module)
+				rows = append(rows, []string{r.Module.Path, r.Module.Version, direct, fmtDate(r.PushedAt), latest, behind})
+			} else {
+				rows = append(rows, []string{r.Module.Path, r.Module.Version, direct, fmtDate(r.PushedAt)})
+			}
 		}
 		printMarkdownTable(os.Stdout, headers, rows)
 	}
@@ -152,7 +185,12 @@ func PrintMarkdownSkipped(modules []Module) {
 	})
 	_, _ = fmt.Fprintf(os.Stdout, "\n## NON-GITHUB MODULES (%d non-GitHub %s)\n\n",
 		len(modules), pluralize(len(modules), "module", "modules"))
-	headers := []string{"Module", "Version", "Latest", "Direct", "Published", "Source"}
+	var headers []string
+	if freshnessEnabled {
+		headers = []string{"Module", "Version", "Latest", "Behind", "Direct", "Published", "Source"}
+	} else {
+		headers = []string{"Module", "Version", "Latest", "Direct", "Published", "Source"}
+	}
 	var rows [][]string
 	for _, m := range modules {
 		direct := "indirect"
@@ -163,7 +201,12 @@ func PrintMarkdownSkipped(modules []Module) {
 		if latest != "" && latest == m.Version {
 			latest = "-"
 		}
-		rows = append(rows, []string{m.Path, m.Version, latest, direct, fmtDate(m.VersionTime), m.SourceURL})
+		if freshnessEnabled {
+			behind := formatVersionAge(m)
+			rows = append(rows, []string{m.Path, m.Version, latest, behind, direct, fmtDate(m.VersionTime), m.SourceURL})
+		} else {
+			rows = append(rows, []string{m.Path, m.Version, latest, direct, fmtDate(m.VersionTime), m.SourceURL})
+		}
 	}
 	printMarkdownTable(os.Stdout, headers, rows)
 }
@@ -205,8 +248,12 @@ func PrintMarkdownStale(stale []RepoStatus) {
 		len(stale), pluralize(len(stale), "module", "modules"), formatThreshold())
 
 	var headers []string
-	if durationEnabled {
+	if durationEnabled && freshnessEnabled {
+		headers = []string{"Module", "Version", "Direct", "Last Pushed", "Inactive", "Latest", "Behind"}
+	} else if durationEnabled {
 		headers = []string{"Module", "Version", "Direct", "Last Pushed", "Inactive"}
+	} else if freshnessEnabled {
+		headers = []string{"Module", "Version", "Direct", "Last Pushed", "Latest", "Behind"}
 	} else {
 		headers = []string{"Module", "Version", "Direct", "Last Pushed"}
 	}
@@ -216,8 +263,17 @@ func PrintMarkdownStale(stale []RepoStatus) {
 		if r.Module.Direct {
 			direct = "direct"
 		}
-		if durationEnabled {
+		latest := r.Module.LatestVersion
+		if latest != "" && latest == r.Module.Version {
+			latest = "-"
+		}
+		behind := formatVersionAge(r.Module)
+		if durationEnabled && freshnessEnabled {
+			rows = append(rows, []string{r.Module.Path, r.Module.Version, direct, fmtDate(r.PushedAt), formatDurationShort(r.PushedAt), latest, behind})
+		} else if durationEnabled {
 			rows = append(rows, []string{r.Module.Path, r.Module.Version, direct, fmtDate(r.PushedAt), formatDurationShort(r.PushedAt)})
+		} else if freshnessEnabled {
+			rows = append(rows, []string{r.Module.Path, r.Module.Version, direct, fmtDate(r.PushedAt), latest, behind})
 		} else {
 			rows = append(rows, []string{r.Module.Path, r.Module.Version, direct, fmtDate(r.PushedAt)})
 		}

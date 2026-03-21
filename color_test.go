@@ -15,11 +15,11 @@ func TestParseColorThreshold(t *testing.T) {
 		{"6m,1y,3y", 3, false},
 		{"3m,1y,2y,5y", 4, false},
 		{"180d,1y6m,3y,5y", 4, false},
-		{"1y", 0, true},              // too few
-		{"1y,2y,3y,4y,5y", 0, true},  // too many
-		{"bad,3y", 0, true},          // invalid value
-		{"1y,bad", 0, true},          // invalid value
-		{"", 0, true},                // empty
+		{"1y", 0, true},             // too few
+		{"1y,2y,3y,4y,5y", 0, true}, // too many
+		{"bad,3y", 0, true},         // invalid value
+		{"1y,bad", 0, true},         // invalid value
+		{"", 0, true},               // empty
 	}
 
 	for _, tt := range tests {
@@ -44,10 +44,10 @@ func TestClassifyAge_FourThresholds(t *testing.T) {
 
 	colorConfig.enabled = true
 	colorConfig.thresholds = []colorThreshold{
-		{0, 3, 0},  // 3m
-		{1, 0, 0},  // 1y
-		{2, 0, 0},  // 2y
-		{5, 0, 0},  // 5y
+		{0, 3, 0}, // 3m
+		{1, 0, 0}, // 1y
+		{2, 0, 0}, // 2y
+		{5, 0, 0}, // 5y
 	}
 
 	now := time.Now()

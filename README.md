@@ -69,6 +69,7 @@ If no path is given, looks for `go.mod` in the current directory. You can also p
 | `--resolve` | Resolve vanity import paths to GitHub repos (e.g. `google.golang.org/grpc` → `github.com/grpc/grpc-go`) |
 | `--deprecated` | Check for deprecated modules via the Go module proxy |
 | `--duration[=DATE]` | Show how long dependencies have been archived (default: today) |
+| `--freshness[=THRESHOLD]` | Show version freshness; with threshold, only deps older than THRESHOLD (e.g. `18m`, `1y6m`) |
 
 **Display:**
 
@@ -167,6 +168,49 @@ STALE DEPENDENCIES (3 modules not pushed in >1y)
 ```
 
 These flags are independent and combine freely. Stale detection is informational only — it does not affect the exit code. Use `--stale=1y6m` or `--stale=180d` to customize the threshold (default: 2y).
+
+### Version freshness
+
+`--freshness` adds LATEST and BEHIND columns to tables, showing the latest available version from the Go module proxy and how far behind each dependency is. This helps prioritize which archived or stale dependencies need attention most urgently.
+
+```
+$ modrot --freshness --stale
+Checking 83 GitHub modules...
+
+ARCHIVED DEPENDENCIES (5 of 83 github.com modules)
+
+MODULE                                     VERSION   DIRECT  ARCHIVED AT  LAST PUSHED  LATEST    BEHIND
+github.com/mitchellh/copystructure         v1.2.0    direct  2024-07-22   2021-05-05   v1.2.0    -
+github.com/pkg/errors                      v0.9.1    indirect  2021-12-01 2021-11-02   v0.9.1    -
+
+STALE DEPENDENCIES (3 modules not pushed in >2y)
+
+MODULE                          VERSION   DIRECT    LAST PUSHED  LATEST    BEHIND
+github.com/foo/bar              v1.2.0    direct    2021-03-15   v1.5.0    2y4m
+```
+
+Archived modules often show "-" in the BEHIND column because no new versions are published after archival. The value becomes most useful for stale or active dependencies where newer versions exist but haven't been adopted.
+
+Combine with `--all` to see freshness for every dependency:
+
+```
+$ modrot --freshness --all
+```
+
+With a threshold, `--freshness=THRESHOLD` adds an OUTDATED DEPENDENCIES section showing only modules whose version was published more than THRESHOLD ago:
+
+```
+$ modrot --freshness=18m --direct-only
+...
+OUTDATED DEPENDENCIES (3 modules with version published >18m ago)
+
+MODULE                            VERSION   LATEST    BEHIND  DIRECT  PUBLISHED
+go.uber.org/goleak                v1.3.0    -         -       direct  2023-10-24
+gopkg.in/jcmturner/goidentity.v3  v3.0.0    -         -       direct  2018-08-27
+layeh.com/radius                  v0.0.0    v0.0.0    2m21d   direct  2023-09-22
+```
+
+Freshness is informational only — it does not affect the exit code.
 
 ### Dependency paths and impact
 

@@ -195,8 +195,12 @@ func PrintStaleTable(stale []RepoStatus) {
 	_, _ = fmt.Fprintf(os.Stderr, "\nSTALE DEPENDENCIES (%d %s not pushed in >%s)\n\n",
 		len(stale), pluralize(len(stale), "module", "modules"), formatThreshold())
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	if durationEnabled {
+	if durationEnabled && freshnessEnabled {
+		_, _ = fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT\tLAST PUSHED\tINACTIVE\tLATEST\tBEHIND")
+	} else if durationEnabled {
 		_, _ = fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT\tLAST PUSHED\tINACTIVE")
+	} else if freshnessEnabled {
+		_, _ = fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT\tLAST PUSHED\tLATEST\tBEHIND")
 	} else {
 		_, _ = fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT\tLAST PUSHED")
 	}
@@ -206,12 +210,75 @@ func PrintStaleTable(stale []RepoStatus) {
 			direct = "direct"
 		}
 		pushedAt := colorize(fmtDate(r.PushedAt), r.PushedAt)
-		if durationEnabled {
+		if durationEnabled && freshnessEnabled {
+			dur := formatDurationShort(r.PushedAt)
+			latest := r.Module.LatestVersion
+			if latest != "" && latest == r.Module.Version {
+				latest = "-"
+			}
+			behind := formatVersionAge(r.Module)
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, pushedAt, dur, latest, behind)
+		} else if durationEnabled {
 			dur := formatDurationShort(r.PushedAt)
 			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, pushedAt, dur)
+		} else if freshnessEnabled {
+			latest := r.Module.LatestVersion
+			if latest != "" && latest == r.Module.Version {
+				latest = "-"
+			}
+			behind := formatVersionAge(r.Module)
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, pushedAt, latest, behind)
 		} else {
 			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, pushedAt)
 		}
+	}
+	_ = w.Flush()
+}
+
+// PrintFreshnessTable outputs a section listing modules whose version publish date
+// exceeds the freshness threshold. Only shown when --freshness=THRESHOLD is set.
+func PrintFreshnessTable(results []RepoStatus, nonGHModules []Module) {
+	threshold := formatFreshnessThreshold()
+	if threshold == "" {
+		return
+	}
+
+	var outdated []Module
+	for _, r := range results {
+		if exceedsFreshnessThreshold(r.Module) {
+			outdated = append(outdated, r.Module)
+		}
+	}
+	for _, m := range nonGHModules {
+		if exceedsFreshnessThreshold(m) {
+			outdated = append(outdated, m)
+		}
+	}
+	if len(outdated) == 0 {
+		return
+	}
+	sort.Slice(outdated, func(i, j int) bool {
+		return outdated[i].Path < outdated[j].Path
+	})
+	_, _ = fmt.Fprintf(os.Stderr, "\nOUTDATED DEPENDENCIES (%d %s with version published >%s ago)\n\n",
+		len(outdated), pluralize(len(outdated), "module", "modules"), threshold)
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "MODULE\tVERSION\tLATEST\tBEHIND\tDIRECT\tPUBLISHED")
+	for _, m := range outdated {
+		direct := "indirect"
+		if m.Direct {
+			direct = "direct"
+		}
+		latest := m.LatestVersion
+		if latest == m.Version {
+			latest = "-"
+		}
+		behind := formatVersionAge(m)
+		published := ""
+		if !m.VersionTime.IsZero() {
+			published = fmtDate(m.VersionTime)
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", m.Path, m.Version, latest, behind, direct, published)
 	}
 	_ = w.Flush()
 }
@@ -331,7 +398,11 @@ func PrintSkippedTable(modules []Module) {
 	})
 	_, _ = fmt.Fprintf(os.Stderr, "\nNON-GITHUB MODULES (%d non-GitHub %s)\n\n", len(modules), pluralize(len(modules), "module", "modules"))
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "MODULE\tVERSION\tLATEST\tDIRECT\tPUBLISHED\tSOURCE")
+	if freshnessEnabled {
+		_, _ = fmt.Fprintln(w, "MODULE\tVERSION\tLATEST\tBEHIND\tDIRECT\tPUBLISHED\tSOURCE")
+	} else {
+		_, _ = fmt.Fprintln(w, "MODULE\tVERSION\tLATEST\tDIRECT\tPUBLISHED\tSOURCE")
+	}
 	for _, m := range modules {
 		direct := "indirect"
 		if m.Direct {
@@ -342,7 +413,12 @@ func PrintSkippedTable(modules []Module) {
 			latest = "-"
 		}
 		published := fmtDate(m.VersionTime)
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", m.Path, m.Version, latest, direct, published, m.SourceURL)
+		if freshnessEnabled {
+			behind := formatVersionAge(m)
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", m.Path, m.Version, latest, behind, direct, published, m.SourceURL)
+		} else {
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", m.Path, m.Version, latest, direct, published, m.SourceURL)
+		}
 	}
 	_ = w.Flush()
 }
@@ -356,9 +432,24 @@ func printArchivedRows(w *tabwriter.Writer, archived []RepoStatus) {
 		}
 		archivedAt := colorize(fmtDate(r.ArchivedAt), r.ArchivedAt)
 		pushedAt := colorize(fmtDate(r.PushedAt), r.PushedAt)
-		if durationEnabled {
+		if durationEnabled && freshnessEnabled {
+			dur := formatDuration(r.ArchivedAt)
+			latest := r.Module.LatestVersion
+			if latest != "" && latest == r.Module.Version {
+				latest = "-"
+			}
+			behind := formatVersionAge(r.Module)
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, archivedAt, dur, pushedAt, latest, behind)
+		} else if durationEnabled {
 			dur := formatDuration(r.ArchivedAt)
 			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, archivedAt, dur, pushedAt)
+		} else if freshnessEnabled {
+			latest := r.Module.LatestVersion
+			if latest != "" && latest == r.Module.Version {
+				latest = "-"
+			}
+			behind := formatVersionAge(r.Module)
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, archivedAt, pushedAt, latest, behind)
 		} else {
 			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, archivedAt, pushedAt)
 		}
@@ -398,8 +489,12 @@ func PrintTable(results []RepoStatus, nonGitHubModules []Module, showAll bool, d
 	if len(archived) > 0 {
 		_, _ = fmt.Fprintf(os.Stderr, "\nARCHIVED DEPENDENCIES (%d of %d github.com modules)\n\n", len(archived), totalChecked)
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		if durationEnabled {
+		if durationEnabled && freshnessEnabled {
+			_, _ = fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT\tARCHIVED AT\tDURATION\tLAST PUSHED\tLATEST\tBEHIND")
+		} else if durationEnabled {
 			_, _ = fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT\tARCHIVED AT\tDURATION\tLAST PUSHED")
+		} else if freshnessEnabled {
+			_, _ = fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT\tARCHIVED AT\tLAST PUSHED\tLATEST\tBEHIND")
 		} else {
 			_, _ = fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT\tARCHIVED AT\tLAST PUSHED")
 		}
@@ -435,14 +530,27 @@ func PrintTable(results []RepoStatus, nonGitHubModules []Module, showAll bool, d
 			return active[i].Module.Path < active[j].Module.Path
 		})
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		_, _ = fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT\tLAST PUSHED")
+		if freshnessEnabled {
+			_, _ = fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT\tLAST PUSHED\tLATEST\tBEHIND")
+		} else {
+			_, _ = fmt.Fprintln(w, "MODULE\tVERSION\tDIRECT\tLAST PUSHED")
+		}
 		for _, r := range active {
 			direct := "indirect"
 			if r.Module.Direct {
 				direct = "direct"
 			}
 			pushedAt := fmtDate(r.PushedAt)
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, pushedAt)
+			if freshnessEnabled {
+				latest := r.Module.LatestVersion
+				if latest != "" && latest == r.Module.Version {
+					latest = "-"
+				}
+				behind := formatVersionAge(r.Module)
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, pushedAt, latest, behind)
+			} else {
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.Module.Path, r.Module.Version, direct, pushedAt)
+			}
 		}
 		_ = w.Flush()
 	}
@@ -550,6 +658,7 @@ type JSONSkippedModule struct {
 	Version       string `json:"version"`
 	Direct        bool   `json:"direct"`
 	LatestVersion string `json:"latest_version,omitempty"`
+	Behind       string `json:"behind,omitempty"`
 	Published     string `json:"published,omitempty"`
 	Host          string `json:"host,omitempty"`
 	SourceURL     string `json:"source_url,omitempty"`
@@ -578,7 +687,19 @@ type JSONModule struct {
 	PushedAt          string           `json:"pushed_at,omitempty"`
 	Error             string           `json:"error,omitempty"`
 	DeprecatedMessage string           `json:"deprecated_message,omitempty"`
+	LatestVersion     string           `json:"latest_version,omitempty"`
+	Behind           string           `json:"behind,omitempty"`
 	SourceFiles       []JSONSourceFile `json:"source_files,omitempty"`
+}
+
+// setJSONFreshness populates LatestVersion and Behind on a JSONModule from a Module.
+func setJSONFreshness(jm *JSONModule, m Module) {
+	if m.LatestVersion != "" {
+		jm.LatestVersion = m.LatestVersion
+	}
+	if va := formatVersionAge(m); va != "" && va != "-" {
+		jm.Behind = va
+	}
 }
 
 // JSONSourceFile represents a source file match in JSON output.
@@ -613,6 +734,11 @@ func buildJSONOutput(results []RepoStatus, nonGitHubModules []Module, showAll bo
 		if m.SourceURL != "" {
 			jsm.SourceURL = m.SourceURL
 		}
+		if freshnessEnabled {
+			if va := formatVersionAge(m); va != "" && va != "-" {
+				jsm.Behind = va
+			}
+		}
 		out.NonGitHubModules = append(out.NonGitHubModules, jsm)
 	}
 
@@ -626,6 +752,9 @@ func buildJSONOutput(results []RepoStatus, nonGitHubModules []Module, showAll bo
 		}
 		if !r.PushedAt.IsZero() {
 			jm.PushedAt = r.PushedAt.Format("2006-01-02T15:04:05Z")
+		}
+		if freshnessEnabled {
+			setJSONFreshness(&jm, r.Module)
 		}
 
 		switch {
@@ -667,6 +796,9 @@ func buildJSONOutput(results []RepoStatus, nonGitHubModules []Module, showAll bo
 		}
 		if !r.PushedAt.IsZero() {
 			jm.PushedAt = r.PushedAt.Format("2006-01-02T15:04:05Z")
+		}
+		if freshnessEnabled {
+			setJSONFreshness(&jm, r.Module)
 		}
 		out.Stale = append(out.Stale, jm)
 	}
@@ -987,6 +1119,11 @@ func buildTreeJSONOutput(results []RepoStatus, graph map[string][]string, allMod
 		}
 		if m.SourceURL != "" {
 			jsm.SourceURL = m.SourceURL
+		}
+		if freshnessEnabled {
+			if va := formatVersionAge(m); va != "" && va != "-" {
+				jsm.Behind = va
+			}
 		}
 		out.NonGitHubModules = append(out.NonGitHubModules, jsm)
 	}

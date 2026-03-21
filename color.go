@@ -12,9 +12,9 @@ const (
 	colorReset = "\033[0m"
 
 	colorBoldCyan      = "\033[1;36m"   // prominent: new
-	colorCyan          = "\033[36m"      // progression
-	colorYellow        = "\033[33m"      // middle
-	colorMagenta       = "\033[35m"      // progression
+	colorCyan          = "\033[36m"     // progression
+	colorYellow        = "\033[33m"     // middle
+	colorMagenta       = "\033[35m"     // progression
 	colorBoldMagentaUL = "\033[1;4;35m" // prominent: critical
 )
 

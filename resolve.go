@@ -22,7 +22,8 @@ type resolver struct {
 
 // proxyInfo represents the JSON response from proxy.golang.org/{module}/@latest.
 type proxyInfo struct {
-	Version string `json:"Version"`
+	Version string    `json:"Version"`
+	Time    time.Time `json:"Time"`
 	Origin  *struct {
 		VCS string `json:"VCS"`
 		URL string `json:"URL"`
