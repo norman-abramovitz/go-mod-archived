@@ -234,33 +234,33 @@ func TestEnrichFreshnessShortCircuit(t *testing.T) {
 	}
 }
 
-func TestExceedsAgeThreshold(t *testing.T) {
+func TestIsOutdated(t *testing.T) {
 	now := time.Date(2026, 3, 21, 0, 0, 0, 0, time.UTC)
 
-	// No threshold set → always true
+	// No threshold set → all modules with version time are outdated
 	cfg := &Config{Age: AgeConfig{Enabled: true}, Now: now}
 	m := Module{VersionTime: now.AddDate(0, -1, 0)}
-	if !exceedsAgeThreshold(cfg, m) {
-		t.Error("no threshold should return true")
+	if !isOutdated(cfg, m) {
+		t.Error("no threshold: all modules should be outdated")
 	}
 
-	// 18m threshold, version 2 years old → exceeds
+	// 18m threshold, version 2 years old → outdated
 	cfg = &Config{Age: AgeConfig{Enabled: true, Months: 18}, Now: now}
 	m = Module{VersionTime: now.AddDate(-2, 0, 0)}
-	if !exceedsAgeThreshold(cfg, m) {
-		t.Error("2y old version should exceed 18m threshold")
+	if !isOutdated(cfg, m) {
+		t.Error("2y old version should be outdated at 18m threshold")
 	}
 
-	// 18m threshold, version 6 months old → does not exceed
+	// 18m threshold, version 6 months old → not outdated
 	m = Module{VersionTime: now.AddDate(0, -6, 0)}
-	if exceedsAgeThreshold(cfg, m) {
-		t.Error("6m old version should not exceed 18m threshold")
+	if isOutdated(cfg, m) {
+		t.Error("6m old version should not be outdated at 18m threshold")
 	}
 
-	// Zero version time → false
+	// Zero version time → not outdated (unknown age)
 	m = Module{}
-	if exceedsAgeThreshold(cfg, m) {
-		t.Error("zero version time should return false")
+	if isOutdated(cfg, m) {
+		t.Error("unknown version time should not be outdated")
 	}
 }
 

@@ -12,7 +12,28 @@ import (
 )
 
 func main() {
-	// Extract --duration, --stale, and --freshness before reorderArgs and flag.Parse,
+	cfg := parseFlags()
+
+	inputPath := resolveInputPath()
+
+	if cfg.Recursive {
+		rootDir := inputPath
+		if info, statErr := os.Stat(rootDir); statErr != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", statErr)
+			os.Exit(2)
+		} else if !info.IsDir() {
+			rootDir = filepath.Dir(rootDir)
+		}
+		os.Exit(runRecursive(rootDir, cfg))
+	}
+
+	os.Exit(runSingleModule(cfg, inputPath))
+}
+
+// parseFlags defines all CLI flags, parses them, and returns a fully
+// populated Config. Handles pre-parse extraction for optional-value flags.
+func parseFlags() *Config {
+	// Extract --duration, --stale, and --age before reorderArgs and flag.Parse,
 	// since they support optional values which Go's flag package cannot handle.
 	durCfg := extractDurationFlag()
 	staleCfg := extractStaleFlag(durCfg)
@@ -68,7 +89,7 @@ func main() {
 	versionFlag := flag.Bool("version", false, "Print version information and exit")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, `Usage: modrot [flags] [path/to/go.mod | path/to/dir]
+		_, _ = fmt.Fprintf(os.Stderr, `Usage: modrot [flags] [path/to/go.mod | path/to/dir]
 
 Detect archived GitHub dependencies in a Go project.
 
@@ -207,60 +228,55 @@ Examples:
 	// Disable color for non-table formats (JSON, markdown, mermaid, quickfix)
 	noColor := *noColorFlag || cfg.OutputFormat != "table"
 	if err := initColor(cfg, noColor, *colorThresholdFlag); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(2)
 	}
 
-	// Determine input path
+	return cfg
+}
+
+// resolveInputPath returns the absolute path to the input go.mod or directory.
+func resolveInputPath() string {
 	inputPath := "."
 	if flag.NArg() > 0 {
 		inputPath = flag.Arg(0)
 	}
-	inputPath, err := filepath.Abs(inputPath)
+	absPath, err := filepath.Abs(inputPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(2)
 	}
+	return absPath
+}
 
-	// Recursive mode: scan directory tree for all go.mod files
-	if cfg.Recursive {
-		rootDir := inputPath
-		if info, statErr := os.Stat(rootDir); statErr != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", statErr)
-			os.Exit(2)
-		} else if !info.IsDir() {
-			rootDir = filepath.Dir(rootDir)
-		}
-		os.Exit(runRecursive(rootDir, cfg))
-	}
-
-	// Single-module mode
+// runSingleModule runs the full pipeline for a single go.mod file.
+// Returns exit code: 0 = no archived deps, 1 = archived deps found, 2 = error.
+func runSingleModule(cfg *Config, inputPath string) int {
 	gomodPath := inputPath
 	if info, err := os.Stat(gomodPath); err == nil && info.IsDir() {
 		gomodPath = filepath.Join(gomodPath, "go.mod")
 	}
 
-	// Parse go.mod
 	allModules, err := ParseGoMod(gomodPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(2)
+		_, _ = fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 2
 	}
 
-	// Print module header (same format as recursive mode)
+	// Print module header
 	modName, _ := ModuleName(gomodPath)
 	cwd, _ := os.Getwd()
 	relPath, relErr := filepath.Rel(cwd, gomodPath)
 	if relErr != nil {
 		relPath = gomodPath
 	}
-	fmt.Fprintf(os.Stderr, "=== %s — %s (%s) ===\n", relPath, modName, goToolchainVersion())
+	_, _ = fmt.Fprintf(os.Stderr, "=== %s — %s (%s) ===\n", relPath, modName, goToolchainVersion())
 
 	// Resolve vanity imports to GitHub repos
 	if cfg.Resolve {
 		resolved := ResolveVanityImports(allModules, 20)
 		if resolved > 0 {
-			fmt.Fprintf(os.Stderr, "Resolved %d non-GitHub modules to GitHub repos.\n", resolved)
+			_, _ = fmt.Fprintf(os.Stderr, "Resolved %d non-GitHub modules to GitHub repos.\n", resolved)
 		}
 	}
 
@@ -268,7 +284,7 @@ Examples:
 	if cfg.Deprecated {
 		count := CheckDeprecations(allModules, 20)
 		if count > 0 {
-			fmt.Fprintf(os.Stderr, "Found %d deprecated %s.\n", count, pluralize(count, "module", "modules"))
+			_, _ = fmt.Fprintf(os.Stderr, "Found %d deprecated %s.\n", count, pluralize(count, "module", "modules"))
 		}
 	}
 
@@ -286,136 +302,162 @@ Examples:
 	}
 
 	if len(githubModules) == 0 {
-		fmt.Fprintf(os.Stderr, "No GitHub modules found in %s\n", gomodPath)
-		os.Exit(0)
+		_, _ = fmt.Fprintf(os.Stderr, "No GitHub modules found in %s\n", gomodPath)
+		return 0
 	}
 
-	fmt.Fprintf(os.Stderr, "Checking %d GitHub modules...\n", len(githubModules))
+	_, _ = fmt.Fprintf(os.Stderr, "Checking %d GitHub modules...\n", len(githubModules))
 
 	// Query GitHub
 	results, err := CheckRepos(githubModules, cfg.Workers)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(2)
+		_, _ = fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 2
 	}
 
-	// Apply ignore list (unless --no-ignore is set)
-	var ignoredResults []RepoStatus
-	ignoreList := NewIgnoreList()
-	if !cfg.NoIgnore {
-		ignoreFilePath := cfg.IgnoreFile
-		if ignoreFilePath == "" {
-			ignoreFilePath = filepath.Join(filepath.Dir(gomodPath), ".modrotignore")
-		}
-		if il, err := LoadIgnoreFile(ignoreFilePath); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not read ignore file: %v\n", err)
-		} else {
-			for p, reason := range il.paths {
-				ignoreList.AddWithReason(p, reason)
-			}
-		}
-		if cfg.IgnoreInline != "" {
-			inline := ParseIgnoreList(cfg.IgnoreInline)
-			for p := range inline.paths {
-				ignoreList.Add(p)
-			}
-		}
-		if ignoreList.Len() > 0 {
-			results, ignoredResults = ignoreList.FilterResults(results)
-			if len(ignoredResults) > 0 && !cfg.ShowIgnored {
-				fmt.Fprintf(os.Stderr, "Ignored %d %s.\n", len(ignoredResults), pluralize(len(ignoredResults), "module", "modules"))
-			}
-		}
-	}
+	// Apply ignore list
+	results, ignoredResults, ignoreList := applyIgnoreList(cfg, results, gomodPath)
 
-	// Check if any archived
-	hasArchived := false
-	var archivedModulePaths []string
-	for _, r := range results {
-		if r.IsArchived {
-			hasArchived = true
-			archivedModulePaths = append(archivedModulePaths, r.Module.Path)
-		}
-	}
+	// Collect archived module paths
+	hasArchived, archivedModulePaths := findArchived(results)
 
 	// Scan source files for imports of archived modules
 	var fileMatches map[string][]FileMatch
 	if cfg.Files && hasArchived {
-		fm, err := ScanImports(filepath.Dir(gomodPath), archivedModulePaths)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error scanning imports: %v\n", err)
-			os.Exit(2)
+		fm, scanErr := ScanImports(filepath.Dir(gomodPath), archivedModulePaths)
+		if scanErr != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "Error scanning imports: %v\n", scanErr)
+			return 2
 		}
 		fileMatches = fm
 	}
 
 	// Collect deprecated modules for output
-	var deprecatedModules []Module
-	if cfg.Deprecated {
-		for _, m := range allModules {
-			if m.Deprecated != "" {
-				if cfg.DirectOnly && !m.Direct {
-					continue
-				}
-				deprecatedModules = append(deprecatedModules, m)
-			}
-		}
-	}
+	deprecatedModules := collectDeprecated(cfg, allModules)
 
 	// Filter stale modules (non-archived repos with old push dates)
 	stale := filterStale(cfg, results)
 
 	// Handle --tree mode
 	if cfg.Tree && hasArchived {
-		graph, err := parseModGraph(filepath.Dir(gomodPath), cfg.GoVersion)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not run go mod graph: %v\n", err)
+		graph, graphErr := parseModGraph(filepath.Dir(gomodPath), cfg.GoVersion)
+		if graphErr != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "Warning: could not run go mod graph: %v\n", graphErr)
 		} else {
-			switch cfg.OutputFormat {
-			case "mermaid":
-				PrintMermaid(cfg, results, graph, allModules)
-			case "json":
-				PrintTreeJSON(cfg, results, graph, allModules, fileMatches, nonGitHubModules, deprecatedModules)
-			case "markdown":
-				PrintMarkdownTree(cfg, results, graph, allModules, fileMatches)
-				if len(stale) > 0 {
-					PrintMarkdownStale(cfg, stale)
-				}
-				if len(deprecatedModules) > 0 {
-					PrintMarkdown(cfg, nil, nil, deprecatedModules)
-				}
-				if len(nonGitHubModules) > 0 {
-					PrintMarkdownSkipped(cfg, nonGitHubModules)
-				}
-			default:
-				PrintTree(cfg, results, graph, allModules, fileMatches)
-				if len(stale) > 0 {
-					PrintStaleTable(cfg, stale)
-				}
-				if len(deprecatedModules) > 0 {
-					PrintDeprecatedTable(deprecatedModules)
-				}
-				if len(nonGitHubModules) > 0 {
-					PrintSkippedTable(cfg, nonGitHubModules)
-				}
-				if cfg.Age.Enabled {
-					PrintOutdatedTable(cfg, results, nonGitHubModules)
-				}
-				if cfg.ShowIgnored {
-					PrintIgnoredTable(cfg, ignoredResults, ignoreList)
-				}
-				if cfg.Stats {
-					PrintStats(cfg, results, nonGitHubModules, stale, deprecatedModules)
-				}
-			}
-			if hasArchived {
-				os.Exit(1)
-			}
-			os.Exit(0)
+			outputTree(cfg, results, graph, allModules, fileMatches, nonGitHubModules, deprecatedModules, stale, ignoredResults, ignoreList)
+			return exitCode(hasArchived)
 		}
 	}
 
 	// Output
+	outputFlat(cfg, results, nonGitHubModules, fileMatches, deprecatedModules, stale, ignoredResults, ignoreList)
+
+	return exitCode(hasArchived)
+}
+
+// applyIgnoreList builds and applies the ignore list, returning filtered results.
+func applyIgnoreList(cfg *Config, results []RepoStatus, gomodPath string) ([]RepoStatus, []RepoStatus, *IgnoreList) {
+	var ignoredResults []RepoStatus
+	ignoreList := NewIgnoreList()
+	if cfg.NoIgnore {
+		return results, ignoredResults, ignoreList
+	}
+
+	ignoreFilePath := cfg.IgnoreFile
+	if ignoreFilePath == "" {
+		ignoreFilePath = filepath.Join(filepath.Dir(gomodPath), ".modrotignore")
+	}
+	if il, err := LoadIgnoreFile(ignoreFilePath); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "Warning: could not read ignore file: %v\n", err)
+	} else {
+		for p, reason := range il.paths {
+			ignoreList.AddWithReason(p, reason)
+		}
+	}
+	if cfg.IgnoreInline != "" {
+		inline := ParseIgnoreList(cfg.IgnoreInline)
+		for p := range inline.paths {
+			ignoreList.Add(p)
+		}
+	}
+	if ignoreList.Len() > 0 {
+		results, ignoredResults = ignoreList.FilterResults(results)
+		if len(ignoredResults) > 0 && !cfg.ShowIgnored {
+			_, _ = fmt.Fprintf(os.Stderr, "Ignored %d %s.\n", len(ignoredResults), pluralize(len(ignoredResults), "module", "modules"))
+		}
+	}
+	return results, ignoredResults, ignoreList
+}
+
+// findArchived returns whether any results are archived and their module paths.
+func findArchived(results []RepoStatus) (bool, []string) {
+	var paths []string
+	for _, r := range results {
+		if r.IsArchived {
+			paths = append(paths, r.Module.Path)
+		}
+	}
+	return len(paths) > 0, paths
+}
+
+// collectDeprecated returns deprecated modules from all parsed modules.
+func collectDeprecated(cfg *Config, allModules []Module) []Module {
+	if !cfg.Deprecated {
+		return nil
+	}
+	var deprecated []Module
+	for _, m := range allModules {
+		if m.Deprecated != "" {
+			if cfg.DirectOnly && !m.Direct {
+				continue
+			}
+			deprecated = append(deprecated, m)
+		}
+	}
+	return deprecated
+}
+
+// outputTree dispatches tree-mode output to the appropriate format.
+func outputTree(cfg *Config, results []RepoStatus, graph map[string][]string, allModules []Module,
+	fileMatches map[string][]FileMatch, nonGitHubModules []Module, deprecatedModules []Module,
+	stale []RepoStatus, ignoredResults []RepoStatus, ignoreList *IgnoreList) {
+
+	switch cfg.OutputFormat {
+	case "mermaid":
+		PrintMermaid(cfg, results, graph, allModules)
+	case "json":
+		PrintTreeJSON(cfg, results, graph, allModules, fileMatches, nonGitHubModules, deprecatedModules)
+	case "markdown":
+		PrintMarkdownTree(cfg, results, graph, allModules, fileMatches)
+		if len(stale) > 0 {
+			PrintMarkdownStale(cfg, stale)
+		}
+		if len(deprecatedModules) > 0 {
+			PrintMarkdown(cfg, nil, nil, deprecatedModules)
+		}
+		if len(nonGitHubModules) > 0 {
+			PrintMarkdownSkipped(cfg, nonGitHubModules)
+		}
+	default:
+		PrintTree(cfg, results, graph, allModules, fileMatches)
+		if len(stale) > 0 {
+			PrintStaleTable(cfg, stale)
+		}
+		if len(deprecatedModules) > 0 {
+			PrintDeprecatedTable(deprecatedModules)
+		}
+		if len(nonGitHubModules) > 0 {
+			PrintSkippedTable(cfg, nonGitHubModules)
+		}
+	}
+	outputSupplement(cfg, results, nonGitHubModules, stale, deprecatedModules, ignoredResults, ignoreList)
+}
+
+// outputFlat dispatches non-tree output to the appropriate format.
+func outputFlat(cfg *Config, results []RepoStatus, nonGitHubModules []Module,
+	fileMatches map[string][]FileMatch, deprecatedModules []Module,
+	stale []RepoStatus, ignoredResults []RepoStatus, ignoreList *IgnoreList) {
+
 	switch cfg.OutputFormat {
 	case "quickfix":
 		if fileMatches != nil {
@@ -440,22 +482,30 @@ Examples:
 			PrintStaleTable(cfg, stale)
 		}
 	}
+	outputSupplement(cfg, results, nonGitHubModules, stale, deprecatedModules, ignoredResults, ignoreList)
+}
+
+// outputSupplement prints age, ignored, and stats sections common to all formats.
+func outputSupplement(cfg *Config, results []RepoStatus, nonGitHubModules []Module,
+	stale []RepoStatus, deprecatedModules []Module, ignoredResults []RepoStatus, ignoreList *IgnoreList) {
 
 	if cfg.Age.Enabled {
 		PrintOutdatedTable(cfg, results, nonGitHubModules)
 	}
-
 	if cfg.ShowIgnored {
 		PrintIgnoredTable(cfg, ignoredResults, ignoreList)
 	}
-
 	if cfg.Stats {
 		PrintStats(cfg, results, nonGitHubModules, stale, deprecatedModules)
 	}
+}
 
+// exitCode returns 1 if archived deps were found, 0 otherwise.
+func exitCode(hasArchived bool) int {
 	if hasArchived {
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 // valueFlagNames lists flags that take a value argument (not boolean).

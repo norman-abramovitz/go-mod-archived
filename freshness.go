@@ -33,15 +33,17 @@ func formatAge(cfg *Config, m Module) string {
 	return compactDuration(m.VersionTime, cfg.Now)
 }
 
-// exceedsAgeThreshold returns true if the module's version publish date
-// is older than the age threshold relative to now. Returns false if
-// no threshold is set (all zeros) or if version time is unavailable.
-func exceedsAgeThreshold(cfg *Config, m Module) bool {
-	if cfg.Age.Years == 0 && cfg.Age.Months == 0 && cfg.Age.Days == 0 {
-		return true // no threshold → show all
-	}
+// isOutdated returns true if the module should appear in the outdated list.
+// When no age threshold is configured, all modules with known version times
+// are considered outdated (show everything). When a threshold is set, only
+// modules older than the threshold are included.
+func isOutdated(cfg *Config, m Module) bool {
 	if m.VersionTime.IsZero() {
 		return false
+	}
+	noThreshold := cfg.Age.Years == 0 && cfg.Age.Months == 0 && cfg.Age.Days == 0
+	if noThreshold {
+		return true
 	}
 	return exceedsThreshold(m.VersionTime, cfg.Age.Years, cfg.Age.Months, cfg.Age.Days, cfg.Now)
 }

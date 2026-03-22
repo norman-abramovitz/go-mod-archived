@@ -221,12 +221,12 @@ func PrintOutdatedTable(cfg *Config, results []RepoStatus, nonGHModules []Module
 
 	var outdated []Module
 	for _, r := range results {
-		if exceedsAgeThreshold(cfg, r.Module) {
+		if isOutdated(cfg, r.Module) {
 			outdated = append(outdated, r.Module)
 		}
 	}
 	for _, m := range nonGHModules {
-		if exceedsAgeThreshold(cfg, m) {
+		if isOutdated(cfg, m) {
 			outdated = append(outdated, m)
 		}
 	}

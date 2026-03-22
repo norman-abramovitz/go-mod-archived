@@ -45,7 +45,7 @@ type ghClient struct {
 // newGHClient creates a ghClient with production defaults.
 func newGHClient() *ghClient {
 	return &ghClient{
-		client:     http.DefaultClient,
+		client:     &http.Client{Timeout: 2 * time.Minute},
 		graphqlURL: "https://api.github.com/graphql",
 	}
 }
@@ -128,6 +128,9 @@ func parseGraphQLResponse(gqlResp gqlResponse, modules []Module) []RepoStatus {
 			rs.Error = errMsg
 		} else if rd, ok := gqlResp.Data[alias]; ok && rd != nil {
 			rs.IsArchived = rd.IsArchived
+			// Parse errors are intentionally ignored — malformed timestamps
+			// from GitHub are extremely rare, and zero time is safe downstream
+			// (checked via .IsZero() before display or comparison).
 			if rd.ArchivedAt != "" {
 				rs.ArchivedAt, _ = time.Parse(time.RFC3339, rd.ArchivedAt)
 			}
