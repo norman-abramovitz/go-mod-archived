@@ -36,7 +36,7 @@ changelog:
       - "^docs:"
       - "^chore:"
 
-brews:
+homebrew_casks:
   - repository:
       owner: norman-abramovitz
       name: homebrew-tap
